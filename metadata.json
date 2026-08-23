@@ -1,0 +1,6 @@
+{
+  "name": "Мастер Плитки",
+  "description": "Сервис для плиточников: калькулятор материалов, календарь заказов и портфолио работ.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

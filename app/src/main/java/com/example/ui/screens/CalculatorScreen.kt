@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -37,117 +36,51 @@ fun CalculatorScreen(
     modifier: Modifier = Modifier
 ) {
     val calculations by viewModel.allCalculations.collectAsState()
-    val handoff by viewModel.cadHandoff.collectAsState()
 
-    // ------------------------------------------------------------------ Объект
-    var areaM2 by remember { mutableStateOf(10.0) }
-    var perimeterM by remember { mutableStateOf(13.0) }
-    var openingsM by remember { mutableStateOf(0.9) }
+    // Состояние вынесено во ViewModel: уход на другую вкладку не сбрасывает введённое.
+    val cs = viewModel.calcState
+    val cad = viewModel.cadState
 
-    // ------------------------------------------------------------------ Плитка
-    var tileW by remember { mutableStateOf(600.0) }
-    var tileH by remember { mutableStateOf(600.0) }
-    var tileThickness by remember { mutableStateOf(9.0) }
-    var grout by remember { mutableStateOf(2.0) }
-    var wastePercent by remember { mutableStateOf(10.0) }
-    var piecesPerPack by remember { mutableStateOf(4.0) }
-    var tilePriceM2 by remember { mutableStateOf(1800.0) }
-    var tilePricePiece by remember { mutableStateOf(0.0) }
-    var density by remember { mutableStateOf(2400.0) }
+    // Пока связь с планом включена, эти величины берутся из CAD-чертежа на лету.
+    val areaM2 = if (cs.syncWithCad) cad.areaM2 else cs.areaM2
+    val perimeterM = if (cs.syncWithCad) cad.perimeterM else cs.perimeterM
+    val tileW = if (cs.syncWithCad) cad.tileW else cs.tileW
+    val tileH = if (cs.syncWithCad) cad.tileH else cs.tileH
+    val grout = if (cs.syncWithCad) cad.grout else cs.grout
 
-    // ------------------------------------------------------------------ Клей
-    var notchIndex by remember { mutableStateOf(4) }
-    var glueKgM2 by remember { mutableStateOf(TROWEL_TABLE[4].consumptionKgM2) }
-    var levelingMm by remember { mutableStateOf(0.0) }
-    var backButtering by remember { mutableStateOf(false) }
-    var glueBagKg by remember { mutableStateOf(25.0) }
-    var gluePrice by remember { mutableStateOf(700.0) }
-    var glueReserve by remember { mutableStateOf(10.0) }
+    // Любая ручная правка связанного поля разрывает связь — но не теряет значения.
+    fun detach() = cs.detachFromCad(cad.areaM2, cad.perimeterM, cad.tileW, cad.tileH, cad.grout)
 
-    // ------------------------------------------------------------------ Затирка
-    var groutDensity by remember { mutableStateOf(1.8) }
-    var groutEpoxy by remember { mutableStateOf(false) }
-    var groutReserve by remember { mutableStateOf(10.0) }
-    var groutPackKg by remember { mutableStateOf(2.0) }
-    var groutPriceKg by remember { mutableStateOf(400.0) }
-
-    // ------------------------------------------------------------------ Основание
-    var screedOn by remember { mutableStateOf(false) }
-    var screedThickness by remember { mutableStateOf(20.0) }
-    var screedKgMm by remember { mutableStateOf(1.6) }
-    var screedBagKg by remember { mutableStateOf(20.0) }
-    var screedPrice by remember { mutableStateOf(450.0) }
-
-    var primerOn by remember { mutableStateOf(true) }
-    var primerKg by remember { mutableStateOf(0.15) }
-    var primerLayers by remember { mutableStateOf(2.0) }
-    var primerPackKg by remember { mutableStateOf(5.0) }
-    var primerPrice by remember { mutableStateOf(900.0) }
-
-    var waterproofOn by remember { mutableStateOf(false) }
-    var wpKg by remember { mutableStateOf(1.2) }
-    var wpLayers by remember { mutableStateOf(2.0) }
-    var wpPackKg by remember { mutableStateOf(20.0) }
-    var wpPrice by remember { mutableStateOf(3500.0) }
-
-    // ------------------------------------------------------------------ Расходники
-    var crossesPerTile by remember { mutableStateOf(2.0) }
-    var clipsPerTile by remember { mutableStateOf(3.0) }
-    var dailyOutputM2 by remember { mutableStateOf(6.0) }
-    var priceCross by remember { mutableStateOf(0.6) }
-    var priceClip by remember { mutableStateOf(3.5) }
-    var priceWedge by remember { mutableStateOf(4.0) }
-
-    // ------------------------------------------------------------------ Погонаж
-    var trimOn by remember { mutableStateOf(false) }
-    var trimPieceM by remember { mutableStateOf(2.5) }
-    var trimReserve by remember { mutableStateOf(10.0) }
-    var trimPrice by remember { mutableStateOf(350.0) }
-
-    // ------------------------------------------------------------------ Работа
-    var workPriceM2 by remember { mutableStateOf(1500.0) }
-    var tripCapacity by remember { mutableStateOf(60.0) }
+    // Зуб гребёнки по умолчанию следует за форматом плитки.
+    val autoNotch = suggestNotch(max(tileW, tileH))
+    val notchIndex = if (cs.notchAuto) TROWEL_TABLE.indexOf(autoNotch) else cs.notchIndex
+    val glueKgM2 = if (cs.notchAuto) autoNotch.consumptionKgM2 else cs.glueKgM2
 
     var showSaveDialog by remember { mutableStateOf(false) }
     var calcName by remember { mutableStateOf("") }
 
-    // Подхват данных из CAD-редактора
-    LaunchedEffect(handoff?.stamp) {
-        handoff?.let {
-            areaM2 = it.areaM2
-            perimeterM = it.perimeterM
-            tileW = it.tileWidthMm
-            tileH = it.tileHeightMm
-            grout = it.groutMm
-            val n = suggestNotch(max(it.tileWidthMm, it.tileHeightMm))
-            notchIndex = TROWEL_TABLE.indexOf(n)
-            glueKgM2 = n.consumptionKgM2
-            viewModel.consumeCadHandoff()
-        }
-    }
-
     // ================================================================== РАСЧЁТЫ
     val tile = calcTile(
-        areaM2, tileW, tileH, grout, wastePercent, piecesPerPack,
-        tilePriceM2, tilePricePiece, tileThickness, density
+        areaM2, tileW, tileH, grout, cs.wastePercent, cs.piecesPerPack,
+        cs.tilePriceM2, cs.tilePricePiece, cs.tileThickness, cs.density
     )
-    val glue = calcGlue(areaM2, glueKgM2, levelingMm, backButtering, glueBagKg, gluePrice, glueReserve)
+    val glue = calcGlue(areaM2, glueKgM2, cs.levelingMm, cs.backButtering, cs.glueBagKg, cs.gluePrice, cs.glueReserve)
     val groutRes = calcGrout(
-        areaM2, tileW, tileH, grout, tileThickness, groutDensity,
-        groutReserve, groutEpoxy, groutPackKg, groutPriceKg
+        areaM2, tileW, tileH, grout, cs.tileThickness, cs.groutDensity,
+        cs.groutReserve, cs.groutEpoxy, cs.groutPackKg, cs.groutPriceKg
     )
-    val screed = if (screedOn) calcScreed(areaM2, screedThickness, screedKgMm, screedBagKg, screedPrice)
+    val screed = if (cs.screedOn) calcScreed(areaM2, cs.screedThickness, cs.screedKgMm, cs.screedBagKg, cs.screedPrice)
     else DryMixResult(0.0, 0.0, 0, 0.0)
-    val primer = if (primerOn) calcCoating(areaM2, primerKg, primerLayers.toInt(), primerPackKg, primerPrice, 0.0)
+    val primer = if (cs.primerOn) calcCoating(areaM2, cs.primerKg, cs.primerLayers.toInt(), cs.primerPackKg, cs.primerPrice, 0.0)
     else CoatingResult(0.0, 0, 0.0, 0.0)
-    val waterproof = if (waterproofOn) calcCoating(areaM2, wpKg, wpLayers.toInt(), wpPackKg, wpPrice, perimeterM)
+    val waterproof = if (cs.waterproofOn) calcCoating(areaM2, cs.wpKg, cs.wpLayers.toInt(), cs.wpPackKg, cs.wpPrice, perimeterM)
     else CoatingResult(0.0, 0, 0.0, 0.0)
     val tileAreaM2 = (tileW / 1000.0) * (tileH / 1000.0)
-    val dailyTiles = if (tileAreaM2 > 0) dailyOutputM2 / tileAreaM2 else 0.0
-    val consum = calcConsumables(tile.pieces, crossesPerTile, clipsPerTile, dailyTiles, priceCross, priceClip, priceWedge)
-    val trim = if (trimOn) calcTrim(perimeterM, openingsM, trimPieceM, trimReserve, trimPrice)
+    val dailyTiles = if (tileAreaM2 > 0) cs.dailyOutputM2 / tileAreaM2 else 0.0
+    val consum = calcConsumables(tile.pieces, cs.crossesPerTile, cs.clipsPerTile, dailyTiles, cs.priceCross, cs.priceClip, cs.priceWedge)
+    val trim = if (cs.trimOn) calcTrim(perimeterM, cs.openingsM, cs.trimPieceM, cs.trimReserve, cs.trimPrice)
     else TrimResult(0.0, 0, 0.0)
-    val work = calcWork(areaM2, dailyOutputM2, workPriceM2)
+    val work = calcWork(areaM2, cs.dailyOutputM2, cs.workPriceM2)
     val totals = calcTotals(
         materials = listOf(
             tile.cost, glue.cost, groutRes.cost, screed.cost,
@@ -158,10 +91,10 @@ fun CalculatorScreen(
             tile.weightKg, glue.totalKg, groutRes.totalKg,
             screed.totalKg, primer.totalKg, waterproof.totalKg
         ),
-        tripCapacityKg = tripCapacity
+        tripCapacityKg = cs.tripCapacity
     )
 
-    // Быстрая раскладка по габаритам «условного прямоугольника» из площади и периметра
+    // Габариты «условного прямоугольника» из площади и периметра — для прикидки рядов
     val sideA = remember(areaM2, perimeterM) {
         val p = perimeterM / 2.0
         val disc = p * p - 4 * areaM2
@@ -195,19 +128,52 @@ fun CalculatorScreen(
                     )
                     HorizontalDivider(Modifier.padding(vertical = 4.dp))
                     InfoRow("Материалы", money(totals.materialsCost))
-                    InfoRow("Работа (${fmtNum(areaM2, 2)} м² × ${fmtNum(workPriceM2, 0)} ₽)", money(totals.laborCost))
+                    InfoRow("Работа (${fmtNum(areaM2, 2)} м² × ${fmtNum(cs.workPriceM2, 0)} ₽)", money(totals.laborCost))
                     InfoRow("Срок", "${fmtNum(work.days, 1)} смен")
                     InfoRow("Вес материалов", "${fmtNum(totals.totalWeightKg, 0)} кг · ${totals.trips} ходок")
                 }
             }
         }
 
+        // ---------------------------------------------------------- Связь с планом
+        item {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (cs.syncWithCad) MaterialTheme.colorScheme.secondaryContainer
+                    else MaterialTheme.colorScheme.surface
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Данные из CAD-плана", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(
+                            if (cs.syncWithCad)
+                                "Площадь, периметр, формат плитки и шов подтягиваются с чертежа автоматически"
+                            else
+                                "Связь разорвана — значения введены вручную",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = cs.syncWithCad,
+                        onCheckedChange = { on -> if (on) cs.syncWithCad = true else detach() }
+                    )
+                }
+            }
+        }
+
         // ---------------------------------------------------------- Шпаргалка
         item {
-            CalcCard("Шпаргалка: главное на объекте", Icons.Default.Bolt, initiallyExpanded = true) {
+            CalcCard("Шпаргалка: главное на объекте", Icons.Default.Bolt, cs) {
                 InfoRow("Плитки купить", "${tile.pieces} шт" + if (tile.packs > 0) " (${tile.packs} уп.)" else "", true)
-                InfoRow("Плитки по площади", "${fmtNum(tile.piecesAreaM2, 2)} м² с запасом ${fmtNum(wastePercent, 0)} %")
-                InfoRow("Клей", "${fmtNum(glue.totalKg, 1)} кг = ${glue.bags} меш. × ${fmtNum(glueBagKg, 0)} кг", true)
+                InfoRow("Плитки по площади", "${fmtNum(tile.piecesAreaM2, 2)} м² с запасом ${fmtNum(cs.wastePercent, 0)} %")
+                InfoRow("Клей", "${fmtNum(glue.totalKg, 1)} кг = ${glue.bags} меш. × ${fmtNum(cs.glueBagKg, 0)} кг", true)
                 InfoRow("Затирка", "${fmtNum(groutRes.totalKg, 2)} кг" + if (groutRes.packs > 0) " (${groutRes.packs} уп.)" else "", true)
                 InfoRow("Длина швов", "${fmtNum(groutRes.jointLengthM, 0)} п.м.")
                 InfoRow("Крестики / зажимы СВП", "${consum.crosses} / ${consum.clips} шт")
@@ -239,21 +205,23 @@ fun CalculatorScreen(
 
         // ---------------------------------------------------------- Объект
         item {
-            CalcCard("Помещение", Icons.Default.SquareFoot) {
-                NumberStepperField("Площадь облицовки", areaM2, { areaM2 = it }, 0.5, suffix = "м²", decimals = 2, min = 0.0, max = 10000.0)
-                NumberStepperField("Периметр", perimeterM, { perimeterM = it }, 0.1, suffix = "м", decimals = 2, min = 0.0, max = 1000.0)
-                NumberStepperField("Проёмы (двери) в периметре", openingsM, { openingsM = it }, 0.1, suffix = "м", decimals = 2, min = 0.0, max = 1000.0)
-                Text(
-                    "Площадь и периметр можно передать сюда прямо из CAD-плана: " +
-                        "вкладка «Раскладка» → «Анализ» → «Отправить в калькулятор».",
-                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            CalcCard("Помещение", Icons.Default.SquareFoot, cs) {
+                NumberStepperField("Площадь облицовки", areaM2, { detach(); cs.areaM2 = it }, 0.5, suffix = "м²", decimals = 2, min = 0.0, max = 10000.0)
+                NumberStepperField("Периметр", perimeterM, { detach(); cs.perimeterM = it }, 0.1, suffix = "м", decimals = 2, min = 0.0, max = 1000.0)
+                NumberStepperField("Проёмы (двери) в периметре", cs.openingsM, { cs.openingsM = it }, 0.1, suffix = "м", decimals = 2, min = 0.0, max = 1000.0)
+                if (cs.syncWithCad) {
+                    Text(
+                        "Значения взяты с CAD-плана. Правка любого из них переключит калькулятор " +
+                            "на ручной ввод — вернуть связь можно тумблером выше.",
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 
         // ---------------------------------------------------------- Плитка
         item {
-            CalcCard("Плитка", Icons.Default.GridOn) {
+            CalcCard("Плитка", Icons.Default.GridOn, cs) {
                 Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -263,15 +231,15 @@ fun CalculatorScreen(
                         600.0 to 600.0, 600.0 to 1200.0, 800.0 to 800.0
                     ).forEach { (w, h) ->
                         AssistChip(
-                            onClick = { tileW = w; tileH = h },
+                            onClick = { detach(); cs.tileW = w; cs.tileH = h },
                             label = { Text("${w.toInt()}×${h.toInt()}", fontSize = 11.sp) }
                         )
                     }
                 }
-                NumberStepperField("Ширина плитки", tileW, { tileW = it }, 10.0, suffix = "мм", decimals = 1, min = 5.0, max = 4000.0)
-                NumberStepperField("Длина плитки", tileH, { tileH = it }, 10.0, suffix = "мм", decimals = 1, min = 5.0, max = 4000.0)
-                NumberStepperField("Толщина плитки", tileThickness, { tileThickness = it }, 0.5, suffix = "мм", decimals = 1, min = 2.0, max = 40.0)
-                NumberStepperField("Ширина шва", grout, { grout = it }, 0.5, suffix = "мм", decimals = 1, min = 0.0, max = 30.0)
+                NumberStepperField("Ширина плитки", tileW, { detach(); cs.tileW = it }, 10.0, suffix = "мм", decimals = 1, min = 5.0, max = 4000.0)
+                NumberStepperField("Длина плитки", tileH, { detach(); cs.tileH = it }, 10.0, suffix = "мм", decimals = 1, min = 5.0, max = 4000.0)
+                NumberStepperField("Толщина плитки", cs.tileThickness, { cs.tileThickness = it }, 0.5, suffix = "мм", decimals = 1, min = 2.0, max = 40.0)
+                NumberStepperField("Ширина шва", grout, { detach(); cs.grout = it }, 0.5, suffix = "мм", decimals = 1, min = 0.0, max = 30.0)
 
                 Text("Запас на подрезку и бой:", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Row(
@@ -280,16 +248,16 @@ fun CalculatorScreen(
                 ) {
                     WASTE_PRESETS.forEach { w ->
                         AssistChip(
-                            onClick = { wastePercent = w.percent },
+                            onClick = { cs.wastePercent = w.percent },
                             label = { Text("${w.title} ${w.percent.toInt()}%", fontSize = 10.sp) }
                         )
                     }
                 }
-                NumberStepperField("Запас", wastePercent, { wastePercent = it }, 1.0, suffix = "%", decimals = 1, min = 0.0, max = 60.0)
-                NumberStepperField("Штук в упаковке", piecesPerPack, { piecesPerPack = it }, 1.0, suffix = "шт", decimals = 0, min = 0.0, max = 200.0)
-                NumberStepperField("Цена за м²", tilePriceM2, { tilePriceM2 = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 500000.0)
-                NumberStepperField("или цена за штуку", tilePricePiece, { tilePricePiece = it }, 10.0, suffix = "₽", decimals = 0, min = 0.0, max = 500000.0)
-                NumberStepperField("Плотность материала", density, { density = it }, 50.0, suffix = "кг/м³", decimals = 0, min = 500.0, max = 4000.0)
+                NumberStepperField("Запас", cs.wastePercent, { cs.wastePercent = it }, 1.0, suffix = "%", decimals = 1, min = 0.0, max = 60.0)
+                NumberStepperField("Штук в упаковке", cs.piecesPerPack, { cs.piecesPerPack = it }, 1.0, suffix = "шт", decimals = 0, min = 0.0, max = 200.0)
+                NumberStepperField("Цена за м²", cs.tilePriceM2, { cs.tilePriceM2 = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 500000.0)
+                NumberStepperField("или цена за штуку", cs.tilePricePiece, { cs.tilePricePiece = it }, 10.0, suffix = "₽", decimals = 0, min = 0.0, max = 500000.0)
+                NumberStepperField("Плотность материала", cs.density, { cs.density = it }, 50.0, suffix = "кг/м³", decimals = 0, min = 500.0, max = 4000.0)
 
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 InfoRow("Площадь с запасом", "${fmtNum(tile.areaWithWasteM2, 2)} м²")
@@ -302,7 +270,7 @@ fun CalculatorScreen(
 
         // ---------------------------------------------------------- Клей
         item {
-            CalcCard("Плиточный клей", Icons.Default.Layers) {
+            CalcCard("Плиточный клей", Icons.Default.Layers, cs) {
                 Text("Зуб гребёнки (задаёт базовый расход):", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -311,7 +279,7 @@ fun CalculatorScreen(
                     TROWEL_TABLE.forEachIndexed { i, n ->
                         FilterChip(
                             selected = notchIndex == i,
-                            onClick = { notchIndex = i; glueKgM2 = n.consumptionKgM2 },
+                            onClick = { cs.notchAuto = false; cs.notchIndex = i; cs.glueKgM2 = n.consumptionKgM2 },
                             label = { Text("${n.notchMm.toInt()} мм", fontSize = 11.sp) }
                         )
                     }
@@ -322,22 +290,29 @@ fun CalculatorScreen(
                         "формат ${n.tileFormat}.",
                     fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                val rec = suggestNotch(max(tileW, tileH))
-                if (rec.notchMm != n.notchMm) {
+                if (cs.notchAuto) {
                     Text(
-                        "Для формата ${tileW.toInt()}×${tileH.toInt()} обычно берут зуб ${rec.notchMm.toInt()} мм.",
+                        "Подобран автоматически под формат ${tileW.toInt()}×${tileH.toInt()} мм.",
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.primary
                     )
+                } else if (autoNotch.notchMm != n.notchMm) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Для формата ${tileW.toInt()}×${tileH.toInt()} обычно берут ${autoNotch.notchMm.toInt()} мм.",
+                            fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { cs.notchAuto = true }) { Text("Авто", fontSize = 11.sp) }
+                    }
                 }
-                NumberStepperField("Расход клея", glueKgM2, { glueKgM2 = it }, 0.25, suffix = "кг/м²", decimals = 2, min = 0.5, max = 30.0)
-                NumberStepperField("Перепад основания (добор слоя)", levelingMm, { levelingMm = it }, 1.0, suffix = "мм", decimals = 1, min = 0.0, max = 50.0)
+                NumberStepperField("Расход клея", glueKgM2, { cs.notchAuto = false; cs.glueKgM2 = it }, 0.25, suffix = "кг/м²", decimals = 2, min = 0.5, max = 30.0)
+                NumberStepperField("Перепад основания (добор слоя)", cs.levelingMm, { cs.levelingMm = it }, 1.0, suffix = "мм", decimals = 1, min = 0.0, max = 50.0)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(backButtering, { backButtering = it })
+                    Checkbox(cs.backButtering, { cs.backButtering = it })
                     Text("Двойное нанесение (крупный формат) ×1,6", fontSize = 12.sp)
                 }
-                NumberStepperField("Вес мешка", glueBagKg, { glueBagKg = it }, 5.0, suffix = "кг", decimals = 0, min = 1.0, max = 100.0)
-                NumberStepperField("Цена мешка", gluePrice, { gluePrice = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
-                NumberStepperField("Запас", glueReserve, { glueReserve = it }, 5.0, suffix = "%", decimals = 0, min = 0.0, max = 50.0)
+                NumberStepperField("Вес мешка", cs.glueBagKg, { cs.glueBagKg = it }, 5.0, suffix = "кг", decimals = 0, min = 1.0, max = 100.0)
+                NumberStepperField("Цена мешка", cs.gluePrice, { cs.gluePrice = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
+                NumberStepperField("Запас", cs.glueReserve, { cs.glueReserve = it }, 5.0, suffix = "%", decimals = 0, min = 0.0, max = 50.0)
 
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 InfoRow("Фактический расход", "${fmtNum(glue.totalKgM2, 2)} кг/м²")
@@ -349,20 +324,20 @@ fun CalculatorScreen(
 
         // ---------------------------------------------------------- Затирка
         item {
-            CalcCard("Затирка швов", Icons.Default.BorderAll) {
+            CalcCard("Затирка швов", Icons.Default.BorderAll, cs) {
                 Text(
                     "Расход по формуле (A+B)·C·D·ρ/(A·B): стороны плитки, ширина шва, " +
                         "глубина шва (толщина плитки) и плотность затирки.",
                     fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                NumberStepperField("Плотность затирки", groutDensity, { groutDensity = it }, 0.1, suffix = "г/см³", decimals = 2, min = 1.0, max = 2.5)
+                NumberStepperField("Плотность затирки", cs.groutDensity, { cs.groutDensity = it }, 0.1, suffix = "г/см³", decimals = 2, min = 1.0, max = 2.5)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(groutEpoxy, { groutEpoxy = it })
+                    Checkbox(cs.groutEpoxy, { cs.groutEpoxy = it })
                     Text("Эпоксидная (расход ×1,4)", fontSize = 12.sp)
                 }
-                NumberStepperField("Запас", groutReserve, { groutReserve = it }, 5.0, suffix = "%", decimals = 0, min = 0.0, max = 50.0)
-                NumberStepperField("Вес упаковки", groutPackKg, { groutPackKg = it }, 0.5, suffix = "кг", decimals = 1, min = 0.0, max = 30.0)
-                NumberStepperField("Цена за кг", groutPriceKg, { groutPriceKg = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
+                NumberStepperField("Запас", cs.groutReserve, { cs.groutReserve = it }, 5.0, suffix = "%", decimals = 0, min = 0.0, max = 50.0)
+                NumberStepperField("Вес упаковки", cs.groutPackKg, { cs.groutPackKg = it }, 0.5, suffix = "кг", decimals = 1, min = 0.0, max = 30.0)
+                NumberStepperField("Цена за кг", cs.groutPriceKg, { cs.groutPriceKg = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
 
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 InfoRow("Расход", "${fmtNum(groutRes.kgPerM2, 3)} кг/м²")
@@ -375,32 +350,32 @@ fun CalculatorScreen(
 
         // ---------------------------------------------------------- Основание
         item {
-            CalcCard("Подготовка основания", Icons.Default.Foundation) {
+            CalcCard("Подготовка основания", Icons.Default.Foundation, cs) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(primerOn, { primerOn = it })
+                    Checkbox(cs.primerOn, { cs.primerOn = it })
                     Text("Грунтовка", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
-                AnimatedVisibility(primerOn) {
+                AnimatedVisibility(cs.primerOn) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        NumberStepperField("Расход на слой", primerKg, { primerKg = it }, 0.05, suffix = "кг/м²", decimals = 2, min = 0.01, max = 2.0)
-                        NumberStepperField("Слоёв", primerLayers, { primerLayers = it }, 1.0, suffix = "шт", decimals = 0, min = 1.0, max = 5.0)
-                        NumberStepperField("Канистра", primerPackKg, { primerPackKg = it }, 1.0, suffix = "кг", decimals = 1, min = 0.5, max = 50.0)
-                        NumberStepperField("Цена канистры", primerPrice, { primerPrice = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
+                        NumberStepperField("Расход на слой", cs.primerKg, { cs.primerKg = it }, 0.05, suffix = "кг/м²", decimals = 2, min = 0.01, max = 2.0)
+                        NumberStepperField("Слоёв", cs.primerLayers, { cs.primerLayers = it }, 1.0, suffix = "шт", decimals = 0, min = 1.0, max = 5.0)
+                        NumberStepperField("Канистра", cs.primerPackKg, { cs.primerPackKg = it }, 1.0, suffix = "кг", decimals = 1, min = 0.5, max = 50.0)
+                        NumberStepperField("Цена канистры", cs.primerPrice, { cs.primerPrice = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
                         InfoRow("Итого грунта", "${fmtNum(primer.totalKg, 2)} кг · ${primer.buckets} шт · ${money(primer.cost)}", true)
                     }
                 }
 
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(waterproofOn, { waterproofOn = it })
+                    Checkbox(cs.waterproofOn, { cs.waterproofOn = it })
                     Text("Гидроизоляция", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
-                AnimatedVisibility(waterproofOn) {
+                AnimatedVisibility(cs.waterproofOn) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        NumberStepperField("Расход на слой", wpKg, { wpKg = it }, 0.1, suffix = "кг/м²", decimals = 2, min = 0.1, max = 5.0)
-                        NumberStepperField("Слоёв", wpLayers, { wpLayers = it }, 1.0, suffix = "шт", decimals = 0, min = 1.0, max = 5.0)
-                        NumberStepperField("Ведро", wpPackKg, { wpPackKg = it }, 1.0, suffix = "кг", decimals = 1, min = 1.0, max = 50.0)
-                        NumberStepperField("Цена ведра", wpPrice, { wpPrice = it }, 100.0, suffix = "₽", decimals = 0, min = 0.0, max = 500000.0)
+                        NumberStepperField("Расход на слой", cs.wpKg, { cs.wpKg = it }, 0.1, suffix = "кг/м²", decimals = 2, min = 0.1, max = 5.0)
+                        NumberStepperField("Слоёв", cs.wpLayers, { cs.wpLayers = it }, 1.0, suffix = "шт", decimals = 0, min = 1.0, max = 5.0)
+                        NumberStepperField("Ведро", cs.wpPackKg, { cs.wpPackKg = it }, 1.0, suffix = "кг", decimals = 1, min = 1.0, max = 50.0)
+                        NumberStepperField("Цена ведра", cs.wpPrice, { cs.wpPrice = it }, 100.0, suffix = "₽", decimals = 0, min = 0.0, max = 500000.0)
                         InfoRow("Итого состава", "${fmtNum(waterproof.totalKg, 2)} кг · ${waterproof.buckets} шт · ${money(waterproof.cost)}", true)
                         InfoRow("Гидролента по периметру", "${fmtNum(waterproof.tapeM, 1)} п.м.")
                     }
@@ -408,15 +383,15 @@ fun CalculatorScreen(
 
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(screedOn, { screedOn = it })
+                    Checkbox(cs.screedOn, { cs.screedOn = it })
                     Text("Стяжка / наливной пол", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
-                AnimatedVisibility(screedOn) {
+                AnimatedVisibility(cs.screedOn) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        NumberStepperField("Толщина слоя", screedThickness, { screedThickness = it }, 1.0, suffix = "мм", decimals = 1, min = 1.0, max = 200.0)
-                        NumberStepperField("Расход на 1 мм", screedKgMm, { screedKgMm = it }, 0.1, suffix = "кг/м²·мм", decimals = 2, min = 0.5, max = 3.0)
-                        NumberStepperField("Вес мешка", screedBagKg, { screedBagKg = it }, 5.0, suffix = "кг", decimals = 0, min = 1.0, max = 100.0)
-                        NumberStepperField("Цена мешка", screedPrice, { screedPrice = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
+                        NumberStepperField("Толщина слоя", cs.screedThickness, { cs.screedThickness = it }, 1.0, suffix = "мм", decimals = 1, min = 1.0, max = 200.0)
+                        NumberStepperField("Расход на 1 мм", cs.screedKgMm, { cs.screedKgMm = it }, 0.1, suffix = "кг/м²·мм", decimals = 2, min = 0.5, max = 3.0)
+                        NumberStepperField("Вес мешка", cs.screedBagKg, { cs.screedBagKg = it }, 5.0, suffix = "кг", decimals = 0, min = 1.0, max = 100.0)
+                        NumberStepperField("Цена мешка", cs.screedPrice, { cs.screedPrice = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
                         InfoRow("Расход", "${fmtNum(screed.kgPerM2, 1)} кг/м²")
                         InfoRow("Итого смеси", "${fmtNum(screed.totalKg, 0)} кг · ${screed.bags} меш. · ${money(screed.cost)}", true)
                         Text(
@@ -431,13 +406,13 @@ fun CalculatorScreen(
 
         // ---------------------------------------------------------- Расходники
         item {
-            CalcCard("Крестики и СВП", Icons.Default.Extension) {
-                NumberStepperField("Крестиков на плитку", crossesPerTile, { crossesPerTile = it }, 0.5, suffix = "шт", decimals = 1, min = 0.0, max = 8.0)
-                NumberStepperField("Зажимов СВП на плитку", clipsPerTile, { clipsPerTile = it }, 0.5, suffix = "шт", decimals = 1, min = 0.0, max = 12.0)
-                NumberStepperField("Выработка за смену", dailyOutputM2, { dailyOutputM2 = it }, 0.5, suffix = "м²", decimals = 1, min = 0.5, max = 100.0)
-                NumberStepperField("Цена крестика", priceCross, { priceCross = it }, 0.1, suffix = "₽", decimals = 2, min = 0.0, max = 100.0)
-                NumberStepperField("Цена зажима", priceClip, { priceClip = it }, 0.5, suffix = "₽", decimals = 2, min = 0.0, max = 100.0)
-                NumberStepperField("Цена клина", priceWedge, { priceWedge = it }, 0.5, suffix = "₽", decimals = 2, min = 0.0, max = 100.0)
+            CalcCard("Крестики и СВП", Icons.Default.Extension, cs) {
+                NumberStepperField("Крестиков на плитку", cs.crossesPerTile, { cs.crossesPerTile = it }, 0.5, suffix = "шт", decimals = 1, min = 0.0, max = 8.0)
+                NumberStepperField("Зажимов СВП на плитку", cs.clipsPerTile, { cs.clipsPerTile = it }, 0.5, suffix = "шт", decimals = 1, min = 0.0, max = 12.0)
+                NumberStepperField("Выработка за смену", cs.dailyOutputM2, { cs.dailyOutputM2 = it }, 0.5, suffix = "м²", decimals = 1, min = 0.5, max = 100.0)
+                NumberStepperField("Цена крестика", cs.priceCross, { cs.priceCross = it }, 0.1, suffix = "₽", decimals = 2, min = 0.0, max = 100.0)
+                NumberStepperField("Цена зажима", cs.priceClip, { cs.priceClip = it }, 0.5, suffix = "₽", decimals = 2, min = 0.0, max = 100.0)
+                NumberStepperField("Цена клина", cs.priceWedge, { cs.priceWedge = it }, 0.5, suffix = "₽", decimals = 2, min = 0.0, max = 100.0)
 
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 InfoRow("Крестики", "${consum.crosses} шт")
@@ -454,16 +429,16 @@ fun CalculatorScreen(
 
         // ---------------------------------------------------------- Погонаж
         item {
-            CalcCard("Плинтус / профиль / уголок", Icons.Default.Straighten) {
+            CalcCard("Плинтус / профиль / уголок", Icons.Default.Straighten, cs) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(trimOn, { trimOn = it })
+                    Checkbox(cs.trimOn, { cs.trimOn = it })
                     Text("Считать погонаж", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
-                AnimatedVisibility(trimOn) {
+                AnimatedVisibility(cs.trimOn) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        NumberStepperField("Длина элемента", trimPieceM, { trimPieceM = it }, 0.1, suffix = "м", decimals = 2, min = 0.1, max = 10.0)
-                        NumberStepperField("Запас", trimReserve, { trimReserve = it }, 5.0, suffix = "%", decimals = 0, min = 0.0, max = 50.0)
-                        NumberStepperField("Цена элемента", trimPrice, { trimPrice = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
+                        NumberStepperField("Длина элемента", cs.trimPieceM, { cs.trimPieceM = it }, 0.1, suffix = "м", decimals = 2, min = 0.1, max = 10.0)
+                        NumberStepperField("Запас", cs.trimReserve, { cs.trimReserve = it }, 5.0, suffix = "%", decimals = 0, min = 0.0, max = 50.0)
+                        NumberStepperField("Цена элемента", cs.trimPrice, { cs.trimPrice = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
                         InfoRow("Длина с запасом", "${fmtNum(trim.lengthM, 2)} м")
                         InfoRow("Элементов", "${trim.pieces} шт", true)
                         InfoRow("Стоимость", money(trim.cost))
@@ -474,10 +449,10 @@ fun CalculatorScreen(
 
         // ---------------------------------------------------------- Работа
         item {
-            CalcCard("Работа и логистика", Icons.Default.Engineering) {
-                NumberStepperField("Цена работы за м²", workPriceM2, { workPriceM2 = it }, 100.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
-                NumberStepperField("Выработка за смену", dailyOutputM2, { dailyOutputM2 = it }, 0.5, suffix = "м²", decimals = 1, min = 0.5, max = 100.0)
-                NumberStepperField("Сколько унести за ходку", tripCapacity, { tripCapacity = it }, 10.0, suffix = "кг", decimals = 0, min = 10.0, max = 1000.0)
+            CalcCard("Работа и логистика", Icons.Default.Engineering, cs) {
+                NumberStepperField("Цена работы за м²", cs.workPriceM2, { cs.workPriceM2 = it }, 100.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
+                NumberStepperField("Выработка за смену", cs.dailyOutputM2, { cs.dailyOutputM2 = it }, 0.5, suffix = "м²", decimals = 1, min = 0.5, max = 100.0)
+                NumberStepperField("Сколько унести за ходку", cs.tripCapacity, { cs.tripCapacity = it }, 10.0, suffix = "кг", decimals = 0, min = 10.0, max = 1000.0)
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 InfoRow("Смен", "${fmtNum(work.days, 1)}")
                 InfoRow("Работа", money(work.laborCost), true)
@@ -534,11 +509,11 @@ fun CalculatorScreen(
                         tileWidthCm = tileW / 10.0,
                         tileHeightCm = tileH / 10.0,
                         groutWidthMm = grout,
-                        tilePricePerSqM = tilePriceM2,
+                        tilePricePerSqM = cs.tilePriceM2,
                         glueConsKgPerSqM = glue.totalKgM2,
-                        glueBagWeightKg = glueBagKg,
-                        gluePricePerBag = gluePrice,
-                        groutPricePerKg = groutPriceKg
+                        glueBagWeightKg = cs.glueBagKg,
+                        gluePricePerBag = cs.gluePrice,
+                        groutPricePerKg = cs.groutPriceKg
                     )
                     calcName = ""
                     showSaveDialog = false
@@ -555,17 +530,19 @@ fun CalculatorScreen(
 private fun CalcCard(
     title: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    initiallyExpanded: Boolean = false,
+    state: CalculatorState,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    var expanded by remember { mutableStateOf(initiallyExpanded) }
+    // Раскрытость карточек тоже хранится во ViewModel, иначе разделы схлопывались бы
+    // при каждом возврате на вкладку.
+    val expanded = title in state.expanded.value
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
-                Modifier.fillMaxWidth().clickable { expanded = !expanded },
+                Modifier.fillMaxWidth().clickable { state.toggleExpanded(title) },
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {

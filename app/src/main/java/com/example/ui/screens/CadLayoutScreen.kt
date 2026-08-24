@@ -31,16 +31,6 @@ import com.example.ui.cad.*
 import kotlin.math.max
 import kotlin.math.min
 
-private enum class CadMode { ROOM, TILE }
-
-private enum class DragMode { PAN, EDIT }
-
-private data class RoomSnapshot(
-    val vertices: List<CadVertex>,
-    val walls: Map<String, WallProps>,
-    val obstacles: List<CadObstacle>
-)
-
 private val LINEAR_STEPS = listOf(1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 500.0)
 private val ANGLE_STEPS = listOf(0.1, 0.5, 1.0, 5.0, 15.0, 45.0, 90.0)
 
@@ -49,128 +39,39 @@ fun CadLayoutScreen(
     viewModel: TileViewModel,
     modifier: Modifier = Modifier
 ) {
-    // ---------------------------------------------------------------- состояние модели
-    var vertices by remember { mutableStateOf(rectangleRoom(3400.0, 2200.0)) }
-    var walls by remember { mutableStateOf<Map<String, WallProps>>(emptyMap()) }
-    var obstacles by remember { mutableStateOf<List<CadObstacle>>(emptyList()) }
+    // Всё состояние чертежа лежит во ViewModel — переключение вкладок его не сбрасывает.
+    val st = viewModel.cadState
+    val calc = viewModel.calcState
 
-    val undoStack = remember { mutableStateListOf<RoomSnapshot>() }
-    fun snapshot() {
-        undoStack.add(RoomSnapshot(vertices, walls, obstacles))
-        if (undoStack.size > 40) undoStack.removeAt(0)
-    }
-    fun undo() {
-        val s = undoStack.removeLastOrNull() ?: return
-        vertices = s.vertices; walls = s.walls; obstacles = s.obstacles
-    }
-
-    // ---------------------------------------------------------------- выбор и режимы
-    var mode by remember { mutableStateOf(CadMode.ROOM) }
-    var dragMode by remember { mutableStateOf(DragMode.PAN) }
-    var selVertex by remember { mutableStateOf<Int?>(null) }
-    var selWall by remember { mutableStateOf<Int?>(null) }
-    var selObstacle by remember { mutableStateOf<String?>(null) }
-    var roomTab by remember { mutableStateOf(0) }
-    var tileTab by remember { mutableStateOf(0) }
-    var panelExpanded by remember { mutableStateOf(true) }
-
-    // ---------------------------------------------------------------- шаги
-    var linStep by remember { mutableStateOf(10.0) }
-    var angStep by remember { mutableStateOf(1.0) }
-    var snapToStep by remember { mutableStateOf(true) }
-
-    // ---------------------------------------------------------------- плитка
-    var tileW by remember { mutableStateOf(600.0) }
-    var tileH by remember { mutableStateOf(600.0) }
-    var grout by remember { mutableStateOf(2.0) }
-    var pattern by remember { mutableStateOf(TilePattern.STRAIGHT) }
-    var offsetPercent by remember { mutableStateOf(50.0) }
-    var tileRotation by remember { mutableStateOf(0.0) }
-    var originMode by remember { mutableStateOf(OriginMode.CORNER) }
-    var originCorner by remember { mutableStateOf(0) }
-    var originOffX by remember { mutableStateOf(0.0) }
-    var originOffY by remember { mutableStateOf(0.0) }
-    var pointX by remember { mutableStateOf(0.0) }
-    var pointY by remember { mutableStateOf(0.0) }
-    var showTiles by remember { mutableStateOf(true) }
-    var highlightCuts by remember { mutableStateOf(true) }
-    var showLabels by remember { mutableStateOf(true) }
-    var showAngles by remember { mutableStateOf(true) }
-
-    // ---------------------------------------------------------------- вид
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
-    var pxPerMm by remember { mutableStateOf(0.09f) }
-    var viewCX by remember { mutableStateOf(1700.0) }
-    var viewCY by remember { mutableStateOf(1100.0) }
-    var didFit by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
     var showRectDialog by remember { mutableStateOf(false) }
 
     fun fitView() {
         if (canvasSize.width == 0 || canvasSize.height == 0) return
-        val b = boundsOf(vertices)
+        val b = boundsOf(st.vertices)
         val w = max(b.width, 500.0)
         val h = max(b.height, 500.0)
         val sx = canvasSize.width / (w * 1.25)
         val sy = canvasSize.height / (h * 1.25)
-        pxPerMm = min(sx, sy).toFloat().coerceIn(0.005f, 6f)
-        viewCX = b.cx
-        viewCY = b.cy
+        st.pxPerMm = min(sx, sy).toFloat().coerceIn(0.005f, 6f)
+        st.viewCX = b.cx
+        st.viewCY = b.cy
     }
 
     LaunchedEffect(canvasSize) {
-        if (!didFit && canvasSize.width > 0) { fitView(); didFit = true }
+        if (!st.didFit && canvasSize.width > 0) { fitView(); st.didFit = true }
     }
 
-    // ---------------------------------------------------------------- производные значения
-    val originPoint = remember(originMode, originCorner, originOffX, originOffY, pointX, pointY, vertices) {
-        when (originMode) {
-            OriginMode.CORNER -> {
-                val v = vertices.getOrNull(originCorner.coerceIn(0, max(0, vertices.size - 1)))
-                if (v == null) P2(0.0, 0.0) else P2(v.x + originOffX, v.y + originOffY)
-            }
-            OriginMode.CENTER -> {
-                val b = boundsOf(vertices)
-                P2(b.cx + originOffX, b.cy + originOffY)
-            }
-            OriginMode.POINT -> P2(pointX, pointY)
-        }
+    val spec = st.tileSpec
+    val layout = remember(st.vertices, st.obstacles, spec, st.showTiles) {
+        if (st.showTiles) generateLayout(st.vertices, st.obstacles, spec)
+        else TileLayout(emptyList(), LayoutStats(0, 0, 0, polygonAreaMm2(st.vertices), 0.0, emptyList(), false))
     }
-
-    val spec = remember(tileW, tileH, grout, pattern, offsetPercent, tileRotation, originPoint) {
-        TileSpec(
-            widthMm = tileW,
-            heightMm = tileH,
-            groutMm = grout,
-            pattern = pattern,
-            offsetFraction = (offsetPercent / 100.0).coerceIn(0.0, 0.9),
-            rotationDeg = tileRotation,
-            originXMm = originPoint.x,
-            originYMm = originPoint.y
-        )
-    }
-
-    val layout = remember(vertices, obstacles, spec, showTiles) {
-        if (showTiles) generateLayout(vertices, obstacles, spec)
-        else TileLayout(emptyList(), LayoutStats(0, 0, 0, polygonAreaMm2(vertices), 0.0, emptyList(), false))
-    }
-
-    val areaMm2 = remember(vertices, obstacles) {
-        max(0.0, polygonAreaMm2(vertices) - obstacles.filter { it.subtract }.sumOf { it.w * it.h })
-    }
-    val perimMm = remember(vertices, walls) {
-        var p = 0.0
-        val n = vertices.size
-        for (i in 0 until n) {
-            if (walls[vertices[i].id]?.excluded == true) continue
-            p += distMm(vertices[i], vertices[(i + 1) % n])
-        }
-        p
-    }
+    val areaMm2 = st.areaM2 * 1_000_000.0
+    val perimMm = st.perimeterM * 1000.0
 
     val textMeasurer = rememberTextMeasurer()
-
-    fun snapVal(v: Double): Double = if (snapToStep && linStep > 0) Math.round(v / linStep) * linStep else v
 
     // =================================================================================
     Column(modifier = modifier.fillMaxSize()) {
@@ -185,23 +86,23 @@ fun CadLayoutScreen(
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(
-                            "S = ${fmtArea(areaMm2)} м²   P = ${fmtNum(perimMm / 1000.0, 2)} м   " +
-                                "углов: ${vertices.size}",
+                            "S = ${fmtArea(areaMm2)} м²   P = ${fmtNum(st.perimeterM, 2)} м   " +
+                                "углов: ${st.vertices.size}",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            if (mode == CadMode.ROOM)
-                                "Шаг ${fmtNum(linStep, 1)} мм / ${fmtNum(angStep, 1)}°"
+                            if (st.mode == CadMode.ROOM)
+                                "Шаг ${fmtNum(st.linStep, 1)} мм / ${fmtNum(st.angStep, 1)}°"
                             else
-                                "${fmtNum(tileW, 0)}×${fmtNum(tileH, 0)} мм, шов ${fmtNum(grout, 1)} мм, " +
-                                    "${fmtNum(tileRotation, 1)}°",
+                                "${fmtNum(st.tileW, 0)}×${fmtNum(st.tileH, 0)} мм, шов ${fmtNum(st.grout, 1)} мм, " +
+                                    "${fmtNum(st.tileRotation, 1)}°",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    ToolIconButton(Icons.Default.Undo, "Отменить", { undo() }, enabled = undoStack.isNotEmpty())
+                    ToolIconButton(Icons.Default.Undo, "Отменить", { st.undo() }, enabled = st.undoStack.isNotEmpty())
                     Spacer(Modifier.width(4.dp))
                     ToolIconButton(Icons.Default.CenterFocusStrong, "Вписать в экран", { fitView() })
                     Spacer(Modifier.width(4.dp))
@@ -213,13 +114,13 @@ fun CadLayoutScreen(
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     SegmentedButton(
                         shape = SegmentedButtonDefaults.itemShape(0, 2),
-                        onClick = { mode = CadMode.ROOM },
-                        selected = mode == CadMode.ROOM
+                        onClick = { st.mode = CadMode.ROOM },
+                        selected = st.mode == CadMode.ROOM
                     ) { Text("1. Контур", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                     SegmentedButton(
                         shape = SegmentedButtonDefaults.itemShape(1, 2),
-                        onClick = { mode = CadMode.TILE },
-                        selected = mode == CadMode.TILE
+                        onClick = { st.mode = CadMode.TILE },
+                        selected = st.mode == CadMode.TILE
                     ) { Text("2. Раскладка", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                 }
             }
@@ -235,100 +136,100 @@ fun CadLayoutScreen(
         ) {
             val transform = CadTransform(
                 centerPx = Offset(canvasSize.width / 2f, canvasSize.height / 2f),
-                viewCenterX = viewCX,
-                viewCenterY = viewCY,
-                pxPerMm = pxPerMm
+                viewCenterX = st.viewCX,
+                viewCenterY = st.viewCY,
+                pxPerMm = st.pxPerMm
             )
             // Жесты читают состояние напрямую: пересоздавать детекторы на каждый
             // сдвиг вида нельзя — жест обрывался бы посреди движения.
-            fun screenToWorldX(px: Float) = viewCX + (px - canvasSize.width / 2f) / pxPerMm
-            fun screenToWorldY(py: Float) = viewCY + (py - canvasSize.height / 2f) / pxPerMm
+            fun screenToWorldX(px: Float) = st.viewCX + (px - canvasSize.width / 2f) / st.pxPerMm
+            fun screenToWorldY(py: Float) = st.viewCY + (py - canvasSize.height / 2f) / st.pxPerMm
 
             Canvas(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(dragMode) {
-                        if (dragMode == DragMode.PAN) {
+                    .pointerInput(st.dragMode) {
+                        if (st.dragMode == DragMode.PAN) {
                             detectTransformGestures { _, pan, zoom, _ ->
-                                val newScale = (pxPerMm * zoom).coerceIn(0.004f, 8f)
-                                pxPerMm = newScale
-                                viewCX -= pan.x / newScale
-                                viewCY -= pan.y / newScale
+                                val newScale = (st.pxPerMm * zoom).coerceIn(0.004f, 8f)
+                                st.pxPerMm = newScale
+                                st.viewCX -= pan.x / newScale
+                                st.viewCY -= pan.y / newScale
                             }
                         }
                     }
-                    .pointerInput(dragMode, mode) {
-                        if (dragMode == DragMode.EDIT) {
+                    .pointerInput(st.dragMode, st.mode) {
+                        if (st.dragMode == DragMode.EDIT) {
                             detectDragGestures { change, drag ->
                                 change.consume()
-                                val dxMm = drag.x / pxPerMm
-                                val dyMm = drag.y / pxPerMm
-                                if (mode == CadMode.ROOM) {
-                                    val vi = selVertex
-                                    val oi = selObstacle
-                                    if (vi != null && vi in vertices.indices) {
-                                        val cur = vertices[vi]
-                                        val nx = snapVal(cur.x + dxMm)
-                                        val ny = snapVal(cur.y + dyMm)
-                                        vertices = setVertexPosition(vertices, walls, vi, nx, ny)
+                                val dxMm = drag.x / st.pxPerMm
+                                val dyMm = drag.y / st.pxPerMm
+                                if (st.mode == CadMode.ROOM) {
+                                    val vi = st.selVertex
+                                    val oi = st.selObstacle
+                                    if (vi != null && vi in st.vertices.indices) {
+                                        val cur = st.vertices[vi]
+                                        val nx = st.snapVal(cur.x + dxMm)
+                                        val ny = st.snapVal(cur.y + dyMm)
+                                        st.vertices = setVertexPosition(st.vertices, st.walls, vi, nx, ny)
                                     } else if (oi != null) {
-                                        obstacles = obstacles.map {
-                                            if (it.id == oi) it.copy(x = snapVal(it.x + dxMm), y = snapVal(it.y + dyMm)) else it
+                                        st.obstacles = st.obstacles.map {
+                                            if (it.id == oi) it.copy(x = st.snapVal(it.x + dxMm), y = st.snapVal(it.y + dyMm)) else it
                                         }
                                     }
                                 } else {
-                                    if (originMode == OriginMode.POINT) {
-                                        pointX = snapVal(pointX + dxMm)
-                                        pointY = snapVal(pointY + dyMm)
+                                    if (st.originMode == OriginMode.POINT) {
+                                        st.pointX = st.snapVal(st.pointX + dxMm)
+                                        st.pointY = st.snapVal(st.pointY + dyMm)
                                     } else {
-                                        originOffX = snapVal(originOffX + dxMm)
-                                        originOffY = snapVal(originOffY + dyMm)
+                                        st.originOffX = st.snapVal(st.originOffX + dxMm)
+                                        st.originOffY = st.snapVal(st.originOffY + dyMm)
                                     }
                                 }
                             }
                         }
                     }
-                    .pointerInput(mode) {
+                    .pointerInput(st.mode) {
                         detectTapGestures { tap ->
                             val wx = screenToWorldX(tap.x)
                             val wy = screenToWorldY(tap.y)
-                            val hitMm = 22f / pxPerMm
+                            val hitMm = 22f / st.pxPerMm
 
-                            if (mode == CadMode.ROOM) {
+                            if (st.mode == CadMode.ROOM) {
                                 var bestV: Int? = null
                                 var bestD = hitMm.toDouble()
-                                vertices.forEachIndexed { i, v ->
+                                st.vertices.forEachIndexed { i, v ->
                                     val d = kotlin.math.hypot(v.x - wx, v.y - wy)
                                     if (d < bestD) { bestD = d; bestV = i }
                                 }
                                 if (bestV != null) {
-                                    selVertex = bestV; selWall = null; selObstacle = null; roomTab = 0
+                                    st.selVertex = bestV; st.selWall = null; st.selObstacle = null; st.roomTab = 0
                                     return@detectTapGestures
                                 }
                                 var bestW: Int? = null
                                 var bestWD = hitMm.toDouble()
-                                val n = vertices.size
+                                val n = st.vertices.size
                                 for (i in 0 until n) {
-                                    val a = vertices[i]
-                                    val b = vertices[(i + 1) % n]
+                                    val a = st.vertices[i]
+                                    val b = st.vertices[(i + 1) % n]
                                     val d = distToSegment(wx, wy, a.x, a.y, b.x, b.y)
                                     if (d < bestWD) { bestWD = d; bestW = i }
                                 }
                                 if (bestW != null) {
-                                    selWall = bestW; selVertex = null; selObstacle = null; roomTab = 1
+                                    st.selWall = bestW; st.selVertex = null; st.selObstacle = null; st.roomTab = 1
                                     return@detectTapGestures
                                 }
-                                val obs = obstacles.firstOrNull {
+                                val obs = st.obstacles.firstOrNull {
                                     pointInPolygon(wx, wy, obstacleCorners(it))
                                 }
                                 if (obs != null) {
-                                    selObstacle = obs.id; selVertex = null; selWall = null; roomTab = 2
+                                    st.selObstacle = obs.id; st.selVertex = null; st.selWall = null; st.roomTab = 2
                                 } else {
-                                    selVertex = null; selWall = null; selObstacle = null
+                                    st.selVertex = null; st.selWall = null; st.selObstacle = null
                                 }
                             } else {
-                                if (originMode == OriginMode.POINT) {
-                                    pointX = snapVal(wx); pointY = snapVal(wy)
+                                if (st.originMode == OriginMode.POINT) {
+                                    st.pointX = st.snapVal(wx); st.pointY = st.snapVal(wy)
                                 }
                             }
                         }
@@ -336,29 +237,29 @@ fun CadLayoutScreen(
             ) {
                 drawCadGrid(transform, minorMm = 100.0, majorMm = 1000.0)
 
-                if (vertices.size >= 3) {
-                    val rp = roomPath(vertices, transform)
+                if (st.vertices.size >= 3) {
+                    val rp = roomPath(st.vertices, transform)
                     drawPath(rp, CadColors.Floor)
-                    if (showTiles) {
-                        clipPath(rp) { drawTiles(layout, spec, transform, highlightCuts) }
+                    if (st.showTiles) {
+                        clipPath(rp) { drawTiles(layout, spec, transform, st.highlightCuts) }
                     }
-                    clipPath(rp) { drawObstacles(obstacles, selObstacle, transform) }
+                    clipPath(rp) { drawObstacles(st.obstacles, st.selObstacle, transform) }
                 }
 
                 drawWalls(
-                    vertices = vertices,
-                    walls = walls,
-                    selectedWall = selWall,
-                    selectedVertex = selVertex,
+                    vertices = st.vertices,
+                    walls = st.walls,
+                    selectedWall = st.selWall,
+                    selectedVertex = st.selVertex,
                     t = transform,
                     tm = textMeasurer,
-                    showLabels = showLabels,
-                    showAngles = showAngles && mode == CadMode.ROOM,
-                    editMode = mode == CadMode.ROOM
+                    showLabels = st.showLabels,
+                    showAngles = st.showAngles && st.mode == CadMode.ROOM,
+                    editMode = st.mode == CadMode.ROOM
                 )
 
-                if (mode == CadMode.TILE) {
-                    drawOriginMarker(originPoint.x, originPoint.y, spec.effectiveRotation, transform)
+                if (st.mode == CadMode.TILE) {
+                    drawOriginMarker(st.originPoint.x, st.originPoint.y, spec.effectiveRotation, transform)
                 }
 
                 drawScaleBar(transform, textMeasurer)
@@ -370,30 +271,30 @@ fun CadLayoutScreen(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 SmallFloatingActionButton(
-                    onClick = { dragMode = if (dragMode == DragMode.PAN) DragMode.EDIT else DragMode.PAN },
-                    containerColor = if (dragMode == DragMode.EDIT)
+                    onClick = { st.dragMode = if (st.dragMode == DragMode.PAN) DragMode.EDIT else DragMode.PAN },
+                    containerColor = if (st.dragMode == DragMode.EDIT)
                         MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
                 ) {
                     Icon(
-                        if (dragMode == DragMode.EDIT) Icons.Default.OpenWith else Icons.Default.PanTool,
-                        contentDescription = if (dragMode == DragMode.EDIT) "Режим правки" else "Режим навигации",
+                        if (st.dragMode == DragMode.EDIT) Icons.Default.OpenWith else Icons.Default.PanTool,
+                        contentDescription = if (st.dragMode == DragMode.EDIT) "Режим правки" else "Режим навигации",
                         modifier = Modifier.size(18.dp)
                     )
                 }
                 SmallFloatingActionButton(
-                    onClick = { pxPerMm = (pxPerMm * 1.3f).coerceAtMost(8f) },
+                    onClick = { st.pxPerMm = (st.pxPerMm * 1.3f).coerceAtMost(8f) },
                     containerColor = MaterialTheme.colorScheme.surface
                 ) { Icon(Icons.Default.Add, "Приблизить", modifier = Modifier.size(18.dp)) }
                 SmallFloatingActionButton(
-                    onClick = { pxPerMm = (pxPerMm / 1.3f).coerceAtLeast(0.004f) },
+                    onClick = { st.pxPerMm = (st.pxPerMm / 1.3f).coerceAtLeast(0.004f) },
                     containerColor = MaterialTheme.colorScheme.surface
                 ) { Icon(Icons.Default.Remove, "Отдалить", modifier = Modifier.size(18.dp)) }
                 SmallFloatingActionButton(
-                    onClick = { panelExpanded = !panelExpanded },
+                    onClick = { st.panelExpanded = !st.panelExpanded },
                     containerColor = MaterialTheme.colorScheme.surface
                 ) {
                     Icon(
-                        if (panelExpanded) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+                        if (st.panelExpanded) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
                         "Свернуть панель",
                         modifier = Modifier.size(18.dp)
                     )
@@ -407,8 +308,8 @@ fun CadLayoutScreen(
             ) {
                 Text(
                     text = when {
-                        dragMode == DragMode.PAN -> "Навигация: тяните карту, щипок — масштаб"
-                        mode == CadMode.ROOM -> "Правка: тапните угол/стену, тяните для сдвига"
+                        st.dragMode == DragMode.PAN -> "Навигация: тяните карту, щипок — масштаб"
+                        st.mode == CadMode.ROOM -> "Правка: тапните угол/стену, тяните для сдвига"
                         else -> "Правка: тяните — двигать старт раскладки"
                     },
                     color = Color.White,
@@ -419,103 +320,97 @@ fun CadLayoutScreen(
         }
 
         // ------------------------------------------------------------------ Панель управления
-        if (panelExpanded) {
+        if (st.panelExpanded) {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 3.dp,
                 modifier = Modifier.fillMaxWidth().heightIn(max = 330.dp)
             ) {
                 Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp)) {
-                    if (mode == CadMode.ROOM) {
-                        RoomTabs(roomTab) { roomTab = it }
+                    if (st.mode == CadMode.ROOM) {
+                        RoomTabs(st.roomTab) { st.roomTab = it }
                         Spacer(Modifier.height(8.dp))
-                        when (roomTab) {
+                        when (st.roomTab) {
                             0 -> VertexPanel(
-                                vertices = vertices,
-                                selected = selVertex,
-                                linStep = linStep,
-                                onStepChange = { linStep = it },
-                                snap = snapToStep,
-                                onSnapChange = { snapToStep = it },
-                                onSelect = { selVertex = it },
-                                onBefore = { snapshot() },
-                                onVerticesChange = { vertices = it },
-                                walls = walls
+                                vertices = st.vertices,
+                                selected = st.selVertex,
+                                linStep = st.linStep,
+                                onStepChange = { st.linStep = it },
+                                snap = st.snapToStep,
+                                onSnapChange = { st.snapToStep = it },
+                                onSelect = { st.selVertex = it },
+                                onBefore = { st.snapshot() },
+                                onVerticesChange = { st.vertices = it },
+                                walls = st.walls
                             )
                             1 -> WallPanel(
-                                vertices = vertices,
-                                walls = walls,
-                                selected = selWall,
-                                linStep = linStep,
-                                angStep = angStep,
-                                onLinStep = { linStep = it },
-                                onAngStep = { angStep = it },
-                                onSelect = { selWall = it },
-                                onBefore = { snapshot() },
-                                onVerticesChange = { vertices = it },
-                                onWallsChange = { walls = it }
+                                vertices = st.vertices,
+                                walls = st.walls,
+                                selected = st.selWall,
+                                linStep = st.linStep,
+                                angStep = st.angStep,
+                                onLinStep = { st.linStep = it },
+                                onAngStep = { st.angStep = it },
+                                onSelect = { st.selWall = it },
+                                onBefore = { st.snapshot() },
+                                onVerticesChange = { st.vertices = it },
+                                onWallsChange = { st.walls = it }
                             )
                             2 -> ObstaclePanel(
-                                obstacles = obstacles,
-                                selectedId = selObstacle,
-                                linStep = linStep,
-                                angStep = angStep,
-                                onSelect = { selObstacle = it },
-                                onBefore = { snapshot() },
-                                onChange = { obstacles = it },
-                                defaultPos = { val b = boundsOf(vertices); P2(b.left + 200, b.top + 200) }
+                                obstacles = st.obstacles,
+                                selectedId = st.selObstacle,
+                                linStep = st.linStep,
+                                angStep = st.angStep,
+                                onSelect = { st.selObstacle = it },
+                                onBefore = { st.snapshot() },
+                                onChange = { st.obstacles = it },
+                                defaultPos = { val b = boundsOf(st.vertices); P2(b.left + 200, b.top + 200) }
                             )
                             else -> ShapePanel(
-                                onBefore = { snapshot() },
+                                onBefore = { st.snapshot() },
                                 onRect = { showRectDialog = true },
-                                onOrtho = { vertices = orthogonalize(vertices) },
-                                onClearLocks = { walls = walls.mapValues { it.value.copy(lengthLocked = false) } },
-                                showLabels = showLabels,
-                                onShowLabels = { showLabels = it },
-                                showAngles = showAngles,
-                                onShowAngles = { showAngles = it }
+                                onOrtho = { st.vertices = orthogonalize(st.vertices) },
+                                onClearLocks = { st.walls = st.walls.mapValues { it.value.copy(lengthLocked = false) } },
+                                showLabels = st.showLabels,
+                                onShowLabels = { st.showLabels = it },
+                                showAngles = st.showAngles,
+                                onShowAngles = { st.showAngles = it }
                             )
                         }
                     } else {
-                        TileTabs(tileTab) { tileTab = it }
+                        TileTabs(st.tileTab) { st.tileTab = it }
                         Spacer(Modifier.height(8.dp))
-                        when (tileTab) {
+                        when (st.tileTab) {
                             0 -> TileParamPanel(
-                                tileW = tileW, onTileW = { tileW = it },
-                                tileH = tileH, onTileH = { tileH = it },
-                                grout = grout, onGrout = { grout = it },
-                                pattern = pattern, onPattern = { pattern = it },
-                                offsetPercent = offsetPercent, onOffsetPercent = { offsetPercent = it },
-                                rotation = tileRotation, onRotation = { tileRotation = it },
-                                linStep = linStep, onLinStep = { linStep = it },
-                                angStep = angStep, onAngStep = { angStep = it }
+                                tileW = st.tileW, onTileW = { st.tileW = it },
+                                tileH = st.tileH, onTileH = { st.tileH = it },
+                                grout = st.grout, onGrout = { st.grout = it },
+                                pattern = st.pattern, onPattern = { st.pattern = it },
+                                offsetPercent = st.offsetPercent, onOffsetPercent = { st.offsetPercent = it },
+                                rotation = st.tileRotation, onRotation = { st.tileRotation = it },
+                                linStep = st.linStep, onLinStep = { st.linStep = it },
+                                angStep = st.angStep, onAngStep = { st.angStep = it }
                             )
                             1 -> OriginPanel(
-                                vertices = vertices,
-                                originMode = originMode, onOriginMode = { originMode = it },
-                                corner = originCorner, onCorner = { originCorner = it },
-                                offX = originOffX, onOffX = { originOffX = it },
-                                offY = originOffY, onOffY = { originOffY = it },
-                                pointX = pointX, onPointX = { pointX = it },
-                                pointY = pointY, onPointY = { pointY = it },
-                                linStep = linStep, onLinStep = { linStep = it },
-                                resolved = originPoint
+                                vertices = st.vertices,
+                                originMode = st.originMode, onOriginMode = { st.originMode = it },
+                                corner = st.originCorner, onCorner = { st.originCorner = it },
+                                offX = st.originOffX, onOffX = { st.originOffX = it },
+                                offY = st.originOffY, onOffY = { st.originOffY = it },
+                                pointX = st.pointX, onPointX = { st.pointX = it },
+                                pointY = st.pointY, onPointY = { st.pointY = it },
+                                linStep = st.linStep, onLinStep = { st.linStep = it },
+                                resolved = st.originPoint
                             )
                             else -> AnalysisPanel(
                                 layout = layout,
                                 spec = spec,
                                 areaMm2 = areaMm2,
-                                showTiles = showTiles, onShowTiles = { showTiles = it },
-                                highlightCuts = highlightCuts, onHighlightCuts = { highlightCuts = it },
-                                onSendToCalculator = {
-                                    viewModel.setCadHandoff(
-                                        areaM2 = areaMm2 / 1_000_000.0,
-                                        perimeterM = perimMm / 1000.0,
-                                        tileWidthMm = tileW,
-                                        tileHeightMm = tileH,
-                                        groutMm = grout
-                                    )
-                                }
+                                perimeterM = st.perimeterM,
+                                showTiles = st.showTiles, onShowTiles = { st.showTiles = it },
+                                highlightCuts = st.highlightCuts, onHighlightCuts = { st.highlightCuts = it },
+                                syncWithCalculator = calc.syncWithCad,
+                                onSyncWithCalculator = { calc.syncWithCad = true }
                             )
                         }
                     }
@@ -528,8 +423,8 @@ fun CadLayoutScreen(
     if (showStats) {
         StatsDialog(
             onDismiss = { showStats = false },
-            vertices = vertices,
-            walls = walls,
+            vertices = st.vertices,
+            walls = st.walls,
             areaMm2 = areaMm2,
             perimMm = perimMm,
             layout = layout,
@@ -541,16 +436,17 @@ fun CadLayoutScreen(
         RectRoomDialog(
             onDismiss = { showRectDialog = false },
             onApply = { w, h ->
-                snapshot()
-                vertices = rectangleRoom(w, h)
-                walls = emptyMap()
-                selVertex = null; selWall = null
+                st.snapshot()
+                st.vertices = rectangleRoom(w, h)
+                st.walls = emptyMap()
+                st.selVertex = null; st.selWall = null
                 showRectDialog = false
                 fitView()
             }
         )
     }
 }
+
 
 // =====================================================================================
 // ВКЛАДКИ
@@ -1193,11 +1089,12 @@ private fun AnalysisPanel(
     layout: TileLayout,
     spec: TileSpec,
     areaMm2: Double,
+    perimeterM: Double,
     showTiles: Boolean, onShowTiles: (Boolean) -> Unit,
     highlightCuts: Boolean, onHighlightCuts: (Boolean) -> Unit,
-    onSendToCalculator: () -> Unit
+    syncWithCalculator: Boolean,
+    onSyncWithCalculator: () -> Unit
 ) {
-    var sent by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -1207,6 +1104,7 @@ private fun AnalysisPanel(
             FilterChip(highlightCuts, { onHighlightCuts(!highlightCuts) }, { Text("Подсветить подрезку", fontSize = 11.sp) })
         }
         InfoRow("Площадь пола", "${fmtArea(areaMm2)} м²")
+        InfoRow("Периметр", "${fmtNum(perimeterM, 2)} м")
         InfoRow("Плитка целиком", "${layout.stats.wholeCount} шт")
         InfoRow("Плитка в подрезку", "${layout.stats.cutCount} шт")
         InfoRow("Всего задействовано", "${layout.stats.totalCount} шт", highlight = true)
@@ -1233,10 +1131,23 @@ private fun AnalysisPanel(
                 fontSize = 11.sp, color = MaterialTheme.colorScheme.error
             )
         }
-        Button(
-            onClick = { onSendToCalculator(); sent = true },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text(if (sent) "Отправлено в калькулятор ✓" else "Отправить в калькулятор", fontSize = 12.sp) }
+
+        HorizontalDivider(Modifier.padding(vertical = 4.dp))
+        if (syncWithCalculator) {
+            Text(
+                "Калькулятор связан с планом: площадь, периметр, формат плитки и шов " +
+                    "уходят в смету автоматически, вручную ничего переносить не нужно.",
+                fontSize = 11.sp, color = MaterialTheme.colorScheme.primary
+            )
+        } else {
+            Text(
+                "Связь с калькулятором разорвана — там значения введены вручную.",
+                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Button(onClick = onSyncWithCalculator, modifier = Modifier.fillMaxWidth()) {
+                Text("Снова брать данные из плана", fontSize = 12.sp)
+            }
+        }
     }
 }
 

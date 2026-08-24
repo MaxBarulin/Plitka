@@ -1,18 +1,23 @@
 package com.example
 
 import android.app.Application
+import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ApplicationProvider
 import com.example.ui.TileViewModel
+import com.example.ui.cad.rectangleRoom
 import com.example.ui.screens.CadLayoutScreen
 import com.example.ui.screens.CalculatorScreen
+import com.example.ui.screens.DashboardScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import org.junit.Rule
@@ -23,8 +28,8 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * Дымовые тесты: экраны должны собираться и переживать переключение вкладок
- * без падений — на устройстве это первое, что ломается.
+ * Дымовые тесты: экраны должны собираться, переживать переключение вкладок
+ * и обмениваться данными — на устройстве это первое, что ломается.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -54,15 +59,43 @@ class ScreenSmokeTest {
     }
 
     @Test
-    fun `cad editor opens the spec dialog`() {
-        rule.setContent { MyApplicationTheme { CadLayoutScreen(viewModel = vm()) } }
+    fun `cad state survives leaving and reopening the screen`() {
+        val viewModel = vm()
+        var visible by mutableStateOf(true)
+        rule.setContent {
+            MyApplicationTheme {
+                if (visible) CadLayoutScreen(viewModel = viewModel) else Text("другая вкладка")
+            }
+        }
+
         rule.onNodeWithText("2. Раскладка").performClick()
         rule.waitForIdle()
-        rule.onNodeWithText("Анализ").performClick()
+        rule.onNodeWithText("Старт").performClick()
         rule.waitForIdle()
-        rule.onNodeWithText("Отправить в калькулятор").performScrollTo().performClick()
+        rule.onNodeWithText("Итоговая точка старта").assertExists()
+
+        // Уходим на другой экран и возвращаемся
+        rule.runOnIdle { visible = false }
+        rule.onNodeWithText("другая вкладка").assertExists()
+        rule.runOnIdle { visible = true }
         rule.waitForIdle()
-        rule.onNodeWithText("Отправлено в калькулятор ✓").assertExists()
+
+        // Редактор вернулся в том же режиме, а не сбросился на «Контур»
+        rule.onNodeWithText("Итоговая точка старта").assertExists()
+    }
+
+    @Test
+    fun `calculator takes area from the cad plan automatically`() {
+        val viewModel = vm()
+        viewModel.cadState.vertices = rectangleRoom(4000.0, 3000.0) // 12 м²
+        rule.setContent { MyApplicationTheme { CalculatorScreen(viewModel = viewModel) } }
+
+        rule.onNodeWithText("Работа (12 м² × 1500 ₽)").assertExists()
+
+        // Правка чертежа тут же меняет смету — без всякого «перенести вручную»
+        rule.runOnIdle { viewModel.cadState.vertices = rectangleRoom(2000.0, 1000.0) } // 2 м²
+        rule.waitForIdle()
+        rule.onNodeWithText("Работа (2 м² × 1500 ₽)").assertExists()
     }
 
     @Test
@@ -78,5 +111,25 @@ class ScreenSmokeTest {
                 rule.onNodeWithText(title).performClick()
                 rule.waitForIdle()
             }
+    }
+
+    @Test
+    fun `dashboard shows an empty state while there are no orders`() {
+        rule.setContent {
+            MyApplicationTheme { DashboardScreen(viewModel = vm(), onNavigateToTab = {}) }
+        }
+
+        rule.onNodeWithText("Заказов пока нет").assertExists()
+    }
+
+    @Test
+    fun `dashboard carries the author signature`() {
+        rule.setContent {
+            MyApplicationTheme { DashboardScreen(viewModel = vm(), onNavigateToTab = {}) }
+        }
+
+        rule.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("By Max B"))
+        rule.onNodeWithText("By Max B").assertExists()
+        rule.onNodeWithText("@Cvela_siren").assertExists()
     }
 }

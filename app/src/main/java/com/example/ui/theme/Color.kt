@@ -27,15 +27,16 @@ val OnPrimaryDark = Color(0xFF651500)
 val PrimaryContainerDark = Color(0xFF3E0600) // Deep burgundy background
 val OnPrimaryContainerDark = Color(0xFFFFDCD2)
 
-val SecondaryDark = Color(0xFF4A454E) // Cool slate dark card
+val SecondaryDark = Color(0xFF3A3440) // Cool slate dark card
 val OnSecondaryDark = Color(0xFFE7E0EB)
 val SecondaryContainerDark = Color(0xFF332F37) // Deep grey-purple card
 val OnSecondaryContainerDark = Color(0xFFF3EDF7)
 
-val BackgroundDark = Color(0xFF201A18) // Cozy dark chocolate
-val OnBackgroundDark = Color(0xFFECE0DB)
-val SurfaceDark = Color(0xFF2A2421)
-val OnSurfaceDark = Color(0xFFECE0DB)
-val SurfaceVariantDark = Color(0xFF53433F)
-val OnSurfaceVariantDark = Color(0xFFD8C2BC)
+val BackgroundDark = Color(0xFF15120F) // Глубокий тёмный фон
+val OnBackgroundDark = Color(0xFFEFE4DE)
+val SurfaceDark = Color(0xFF221D1A) // Карточки чуть светлее фона
+val OnSurfaceDark = Color(0xFFEFE4DE)
+val SurfaceVariantDark = Color(0xFF3A302C)
+val OnSurfaceVariantDark = Color(0xFFC9B7B0)
+val OutlineDark = Color(0xFF564A45)
 

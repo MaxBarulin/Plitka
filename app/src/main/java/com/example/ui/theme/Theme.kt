@@ -1,7 +1,6 @@
 package com.example.ui.theme
 
 import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -36,7 +35,9 @@ private val DarkColorScheme = darkColorScheme(
     surface = SurfaceDark,
     onSurface = OnSurfaceDark,
     surfaceVariant = SurfaceVariantDark,
-    onSurfaceVariant = OnSurfaceVariantDark
+    onSurfaceVariant = OnSurfaceVariantDark,
+    outline = OutlineDark,
+    outlineVariant = SurfaceVariantDark
 )
 
 private val LightColorScheme = lightColorScheme(
@@ -56,9 +57,13 @@ private val LightColorScheme = lightColorScheme(
     onSurfaceVariant = OnSurfaceVariantLight
 )
 
+/**
+ * Приложение всегда тёмное: на объекте так меньше слепит, а чертёж на тёмном фоне
+ * читается лучше. Системная настройка светлой темы игнорируется намеренно.
+ */
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = true,
     dynamicColor: Boolean = false, // Disable dynamic colors to enforce our beautiful custom branding
     content: @Composable () -> Unit,
 ) {

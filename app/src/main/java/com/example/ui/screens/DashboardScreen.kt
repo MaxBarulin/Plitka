@@ -368,7 +368,7 @@ fun DashboardScreen(
             }
         }
 
-        // Cell 4: Portfolio Preview (col-span-2)
+        // Cell 4: CAD-редактор помещения
         Card(
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surface,
@@ -378,8 +378,8 @@ fun DashboardScreen(
                 .fillMaxWidth()
                 .border(1.dp, MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.large)
                 .shadow(1.dp, shape = MaterialTheme.shapes.large)
-                .clickable { onNavigateToTab(TileTab.PORTFOLIO) }
-                .testTag("bento_portfolio"),
+                .clickable { onNavigateToTab(TileTab.CAD_PLAN) }
+                .testTag("bento_cad"),
             shape = MaterialTheme.shapes.large
         ) {
             Column(
@@ -393,29 +393,28 @@ fun DashboardScreen(
                 ) {
                     Column {
                         Text(
-                            text = "Портфолио",
+                            text = "CAD-план помещения",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "24 выполненных проекта",
+                            text = "Точная геометрия до миллиметра и раскладка плитки",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Icon(
                         imageVector = Icons.Default.ChevronRight,
-                        contentDescription = "В портфолио",
+                        contentDescription = "В CAD-редактор",
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }
 
-                // Three visual preview badges representing works as styled boxes from Bento HTML
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf("Кухня", "Санузел", "Фартук").forEach { category ->
+                    listOf("Контур", "Стены ±1 мм", "Раскладка").forEach { category ->
                         Box(
                             modifier = Modifier
                                 .weight(1f)
@@ -432,7 +431,8 @@ fun DashboardScreen(
                                 style = MaterialTheme.typography.labelMedium.copy(
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary
-                                )
+                                ),
+                                textAlign = TextAlign.Center
                             )
                         }
                     }

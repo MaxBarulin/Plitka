@@ -2,843 +2,620 @@ package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.Canvas
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.unit.sp
 import com.example.data.Calculation
 import com.example.ui.TileViewModel
+import com.example.ui.cad.InfoRow
+import com.example.ui.cad.NumberStepperField
+import com.example.ui.cad.fmtNum
+import com.example.ui.calc.*
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.math.max
 
-@OptIn(ExperimentalMaterial3Api::class)
+private fun money(v: Double): String = "%,.0f ₽".format(v).replace(',', ' ')
+
 @Composable
 fun CalculatorScreen(
     viewModel: TileViewModel,
     modifier: Modifier = Modifier
 ) {
     val calculations by viewModel.allCalculations.collectAsState()
-    val focusManager = LocalFocusManager.current
+    val handoff by viewModel.cadHandoff.collectAsState()
 
-    // Inputs State
-    var areaInput by remember { mutableStateOf("10") }
-    var tileWidthInput by remember { mutableStateOf("30") }
-    var tileHeightInput by remember { mutableStateOf("60") }
-    var groutWidthInput by remember { mutableStateOf("2") }
-    var tilePriceInput by remember { mutableStateOf("1500") }
-    var glueConsInput by remember { mutableStateOf("4.5") }
-    var glueBagWeightInput by remember { mutableStateOf("25") }
-    var gluePriceInput by remember { mutableStateOf("600") }
-    var groutPriceInput by remember { mutableStateOf("300") }
+    // ------------------------------------------------------------------ Объект
+    var areaM2 by remember { mutableStateOf(10.0) }
+    var perimeterM by remember { mutableStateOf(13.0) }
+    var openingsM by remember { mutableStateOf(0.9) }
 
-    // Dialog state
+    // ------------------------------------------------------------------ Плитка
+    var tileW by remember { mutableStateOf(600.0) }
+    var tileH by remember { mutableStateOf(600.0) }
+    var tileThickness by remember { mutableStateOf(9.0) }
+    var grout by remember { mutableStateOf(2.0) }
+    var wastePercent by remember { mutableStateOf(10.0) }
+    var piecesPerPack by remember { mutableStateOf(4.0) }
+    var tilePriceM2 by remember { mutableStateOf(1800.0) }
+    var tilePricePiece by remember { mutableStateOf(0.0) }
+    var density by remember { mutableStateOf(2400.0) }
+
+    // ------------------------------------------------------------------ Клей
+    var notchIndex by remember { mutableStateOf(4) }
+    var glueKgM2 by remember { mutableStateOf(TROWEL_TABLE[4].consumptionKgM2) }
+    var levelingMm by remember { mutableStateOf(0.0) }
+    var backButtering by remember { mutableStateOf(false) }
+    var glueBagKg by remember { mutableStateOf(25.0) }
+    var gluePrice by remember { mutableStateOf(700.0) }
+    var glueReserve by remember { mutableStateOf(10.0) }
+
+    // ------------------------------------------------------------------ Затирка
+    var groutDensity by remember { mutableStateOf(1.8) }
+    var groutEpoxy by remember { mutableStateOf(false) }
+    var groutReserve by remember { mutableStateOf(10.0) }
+    var groutPackKg by remember { mutableStateOf(2.0) }
+    var groutPriceKg by remember { mutableStateOf(400.0) }
+
+    // ------------------------------------------------------------------ Основание
+    var screedOn by remember { mutableStateOf(false) }
+    var screedThickness by remember { mutableStateOf(20.0) }
+    var screedKgMm by remember { mutableStateOf(1.6) }
+    var screedBagKg by remember { mutableStateOf(20.0) }
+    var screedPrice by remember { mutableStateOf(450.0) }
+
+    var primerOn by remember { mutableStateOf(true) }
+    var primerKg by remember { mutableStateOf(0.15) }
+    var primerLayers by remember { mutableStateOf(2.0) }
+    var primerPackKg by remember { mutableStateOf(5.0) }
+    var primerPrice by remember { mutableStateOf(900.0) }
+
+    var waterproofOn by remember { mutableStateOf(false) }
+    var wpKg by remember { mutableStateOf(1.2) }
+    var wpLayers by remember { mutableStateOf(2.0) }
+    var wpPackKg by remember { mutableStateOf(20.0) }
+    var wpPrice by remember { mutableStateOf(3500.0) }
+
+    // ------------------------------------------------------------------ Расходники
+    var crossesPerTile by remember { mutableStateOf(2.0) }
+    var clipsPerTile by remember { mutableStateOf(3.0) }
+    var dailyOutputM2 by remember { mutableStateOf(6.0) }
+    var priceCross by remember { mutableStateOf(0.6) }
+    var priceClip by remember { mutableStateOf(3.5) }
+    var priceWedge by remember { mutableStateOf(4.0) }
+
+    // ------------------------------------------------------------------ Погонаж
+    var trimOn by remember { mutableStateOf(false) }
+    var trimPieceM by remember { mutableStateOf(2.5) }
+    var trimReserve by remember { mutableStateOf(10.0) }
+    var trimPrice by remember { mutableStateOf(350.0) }
+
+    // ------------------------------------------------------------------ Работа
+    var workPriceM2 by remember { mutableStateOf(1500.0) }
+    var tripCapacity by remember { mutableStateOf(60.0) }
+
     var showSaveDialog by remember { mutableStateOf(false) }
-    var calcNameInput by remember { mutableStateOf("") }
+    var calcName by remember { mutableStateOf("") }
 
-    // Parse values safely
-    val area = areaInput.toDoubleOrNull() ?: 0.0
-    val tileWidth = tileWidthCmInputParser(tileWidthInput)
-    val tileHeight = tileWidthCmInputParser(tileHeightInput)
-    val groutWidth = groutWidthInputParser(groutWidthInput)
-    val tilePrice = tilePriceInput.toDoubleOrNull() ?: 0.0
-    val glueCons = glueConsInput.toDoubleOrNull() ?: 0.0
-    val glueBagWeight = glueBagWeightInput.toDoubleOrNull() ?: 25.0
-    val gluePrice = gluePriceInput.toDoubleOrNull() ?: 0.0
-    val groutPrice = groutPriceInput.toDoubleOrNull() ?: 0.0
+    // Подхват данных из CAD-редактора
+    LaunchedEffect(handoff?.stamp) {
+        handoff?.let {
+            areaM2 = it.areaM2
+            perimeterM = it.perimeterM
+            tileW = it.tileWidthMm
+            tileH = it.tileHeightMm
+            grout = it.groutMm
+            val n = suggestNotch(max(it.tileWidthMm, it.tileHeightMm))
+            notchIndex = TROWEL_TABLE.indexOf(n)
+            glueKgM2 = n.consumptionKgM2
+            viewModel.consumeCadHandoff()
+        }
+    }
 
-    // Compute live results
-    val results = viewModel.runCalculation(
-        areaSqM = area,
-        tileWidthCm = tileWidth,
-        tileHeightCm = tileHeight,
-        groutWidthMm = groutWidth,
-        tilePricePerSqM = tilePrice,
-        glueConsKgPerSqM = glueCons,
-        glueBagWeightKg = glueBagWeight,
-        gluePricePerBag = gluePrice,
-        groutPricePerKg = groutPrice
+    // ================================================================== РАСЧЁТЫ
+    val tile = calcTile(
+        areaM2, tileW, tileH, grout, wastePercent, piecesPerPack,
+        tilePriceM2, tilePricePiece, tileThickness, density
+    )
+    val glue = calcGlue(areaM2, glueKgM2, levelingMm, backButtering, glueBagKg, gluePrice, glueReserve)
+    val groutRes = calcGrout(
+        areaM2, tileW, tileH, grout, tileThickness, groutDensity,
+        groutReserve, groutEpoxy, groutPackKg, groutPriceKg
+    )
+    val screed = if (screedOn) calcScreed(areaM2, screedThickness, screedKgMm, screedBagKg, screedPrice)
+    else DryMixResult(0.0, 0.0, 0, 0.0)
+    val primer = if (primerOn) calcCoating(areaM2, primerKg, primerLayers.toInt(), primerPackKg, primerPrice, 0.0)
+    else CoatingResult(0.0, 0, 0.0, 0.0)
+    val waterproof = if (waterproofOn) calcCoating(areaM2, wpKg, wpLayers.toInt(), wpPackKg, wpPrice, perimeterM)
+    else CoatingResult(0.0, 0, 0.0, 0.0)
+    val tileAreaM2 = (tileW / 1000.0) * (tileH / 1000.0)
+    val dailyTiles = if (tileAreaM2 > 0) dailyOutputM2 / tileAreaM2 else 0.0
+    val consum = calcConsumables(tile.pieces, crossesPerTile, clipsPerTile, dailyTiles, priceCross, priceClip, priceWedge)
+    val trim = if (trimOn) calcTrim(perimeterM, openingsM, trimPieceM, trimReserve, trimPrice)
+    else TrimResult(0.0, 0, 0.0)
+    val work = calcWork(areaM2, dailyOutputM2, workPriceM2)
+    val totals = calcTotals(
+        materials = listOf(
+            tile.cost, glue.cost, groutRes.cost, screed.cost,
+            primer.cost, waterproof.cost, consum.cost, trim.cost
+        ),
+        laborCost = work.laborCost,
+        weights = listOf(
+            tile.weightKg, glue.totalKg, groutRes.totalKg,
+            screed.totalKg, primer.totalKg, waterproof.totalKg
+        ),
+        tripCapacityKg = tripCapacity
     )
 
+    // Быстрая раскладка по габаритам «условного прямоугольника» из площади и периметра
+    val sideA = remember(areaM2, perimeterM) {
+        val p = perimeterM / 2.0
+        val disc = p * p - 4 * areaM2
+        if (disc >= 0) (p + kotlin.math.sqrt(disc)) / 2.0 else kotlin.math.sqrt(areaM2)
+    }
+    val sideB = if (sideA > 0.01) areaM2 / sideA else 0.0
+    val rowsA = calcRows(sideA * 1000, tileW, grout)
+    val rowsB = calcRows(sideB * 1000, tileH, grout)
+
+    // ================================================================== UI
     LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(bottom = 32.dp, top = 8.dp)
+        modifier = modifier.fillMaxSize().padding(horizontal = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp)
     ) {
-        // --- Total Card ---
+        // ---------------------------------------------------------- Итог
         item {
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("ИТОГО ПО ОБЪЕКТУ", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        text = "ОБЩАЯ СТОИМОСТЬ МАТЕРИАЛОВ",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "%,.0f ₽".format(results.totalCost),
-                        style = MaterialTheme.typography.headlineLarge,
+                        money(totals.grandTotal),
+                        style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.ExtraBold
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Площадь: $area м²",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Text(
-                            text = "Плитка: ${tileWidth.toInt()}x${tileHeight.toInt()} см",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                    InfoRow("Материалы", money(totals.materialsCost))
+                    InfoRow("Работа (${fmtNum(areaM2, 2)} м² × ${fmtNum(workPriceM2, 0)} ₽)", money(totals.laborCost))
+                    InfoRow("Срок", "${fmtNum(work.days, 1)} смен")
+                    InfoRow("Вес материалов", "${fmtNum(totals.totalWeightKg, 0)} кг · ${totals.trips} ходок")
                 }
             }
         }
 
-        // --- Inputs Grid ---
+        // ---------------------------------------------------------- Шпаргалка
         item {
-            Text(
-                text = "Параметры укладки",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                modifier = Modifier.fillMaxWidth(),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Row 1: Area and Grout
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = areaInput,
-                            onValueChange = { areaInput = it },
-                            label = { Text("Площадь (м²)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = groutWidthInput,
-                            onValueChange = { groutWidthInput = it },
-                            label = { Text("Шов (мм)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
-                        )
-                    }
-
-                    // Row 2: Tile dimensions
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = tileWidthInput,
-                            onValueChange = { tileWidthInput = it },
-                            label = { Text("Шир. плитки (см)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = tileHeightInput,
-                            onValueChange = { tileHeightInput = it },
-                            label = { Text("Выс. плитки (см)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
-                        )
-                    }
-
-                    // Row 3: Tile price
-                    OutlinedTextField(
-                        value = tilePriceInput,
-                        onValueChange = { tilePriceInput = it },
-                        label = { Text("Цена плитки за м² (₽)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        leadingIcon = { Icon(Icons.Default.Payments, contentDescription = null) }
+            CalcCard("Шпаргалка: главное на объекте", Icons.Default.Bolt, initiallyExpanded = true) {
+                InfoRow("Плитки купить", "${tile.pieces} шт" + if (tile.packs > 0) " (${tile.packs} уп.)" else "", true)
+                InfoRow("Плитки по площади", "${fmtNum(tile.piecesAreaM2, 2)} м² с запасом ${fmtNum(wastePercent, 0)} %")
+                InfoRow("Клей", "${fmtNum(glue.totalKg, 1)} кг = ${glue.bags} меш. × ${fmtNum(glueBagKg, 0)} кг", true)
+                InfoRow("Затирка", "${fmtNum(groutRes.totalKg, 2)} кг" + if (groutRes.packs > 0) " (${groutRes.packs} уп.)" else "", true)
+                InfoRow("Длина швов", "${fmtNum(groutRes.jointLengthM, 0)} п.м.")
+                InfoRow("Крестики / зажимы СВП", "${consum.crosses} / ${consum.clips} шт")
+                InfoRow("Клинья СВП (на смену)", "${consum.wedges} шт")
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                Text(
+                    "Рядов при габарите ${fmtNum(sideA, 2)}×${fmtNum(sideB, 2)} м:",
+                    fontSize = 11.sp, fontWeight = FontWeight.Bold
+                )
+                InfoRow(
+                    "По длине",
+                    "${rowsA.fullRows} целых + подрезка ${fmtNum(rowsA.lastRowMm, 0)} мм",
+                    rowsA.recommendCentering
+                )
+                InfoRow(
+                    "По ширине",
+                    "${rowsB.fullRows} целых + подрезка ${fmtNum(rowsB.lastRowMm, 0)} мм",
+                    rowsB.recommendCentering
+                )
+                if (rowsA.recommendCentering || rowsB.recommendCentering) {
+                    Text(
+                        "Подрезка уже трети плитки — разложите симметрично от центра: " +
+                            "тогда с обеих сторон будет по ${fmtNum(if (rowsA.recommendCentering) rowsA.centeredEdgeMm else rowsB.centeredEdgeMm, 0)} мм.",
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.error
                     )
-
-                    // Expandable / Advanced params header
-                    var showAdvanced by remember { mutableStateOf(false) }
-                    TextButton(
-                        onClick = { showAdvanced = !showAdvanced },
-                        modifier = Modifier.align(Alignment.End)
-                    ) {
-                        Icon(
-                            imageVector = if (showAdvanced) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = null
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(if (showAdvanced) "Скрыть доп. параметры" else "Настройки клея и затирки")
-                    }
-
-                    AnimatedVisibility(visible = showAdvanced) {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                            
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedTextField(
-                                    value = glueConsInput,
-                                    onValueChange = { glueConsInput = it },
-                                    label = { Text("Расход клея (кг/м²)") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    modifier = Modifier.weight(1f),
-                                    singleLine = true
-                                )
-                                OutlinedTextField(
-                                    value = glueBagWeightInput,
-                                    onValueChange = { glueBagWeightInput = it },
-                                    label = { Text("Вес мешка (кг)") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    modifier = Modifier.weight(1f),
-                                    singleLine = true
-                                )
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedTextField(
-                                    value = gluePriceInput,
-                                    onValueChange = { gluePriceInput = it },
-                                    label = { Text("Цена клея (₽/мешок)") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    modifier = Modifier.weight(1f),
-                                    singleLine = true
-                                )
-                                OutlinedTextField(
-                                    value = groutPriceInput,
-                                    onValueChange = { groutPriceInput = it },
-                                    label = { Text("Цена затирки (₽/кг)") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    modifier = Modifier.weight(1f),
-                                    singleLine = true
-                                )
-                            }
-                        }
-                    }
                 }
             }
         }
 
-        // --- Action Buttons ---
+        // ---------------------------------------------------------- Объект
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = {
-                        focusManager.clearFocus()
-                        calcNameInput = "Расчет ${area}м² (${tileWidth.toInt()}x${tileHeight.toInt()})"
-                        showSaveDialog = true
-                    },
-                    modifier = Modifier.weight(1f)
+            CalcCard("Помещение", Icons.Default.SquareFoot) {
+                NumberStepperField("Площадь облицовки", areaM2, { areaM2 = it }, 0.5, suffix = "м²", decimals = 2, min = 0.0, max = 10000.0)
+                NumberStepperField("Периметр", perimeterM, { perimeterM = it }, 0.1, suffix = "м", decimals = 2, min = 0.0, max = 1000.0)
+                NumberStepperField("Проёмы (двери) в периметре", openingsM, { openingsM = it }, 0.1, suffix = "м", decimals = 2, min = 0.0, max = 1000.0)
+                Text(
+                    "Площадь и периметр можно передать сюда прямо из CAD-плана: " +
+                        "вкладка «Раскладка» → «Анализ» → «Отправить в калькулятор».",
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // ---------------------------------------------------------- Плитка
+        item {
+            CalcCard("Плитка", Icons.Default.GridOn) {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(Icons.Default.Save, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Сохранить расчет")
+                    listOf(
+                        200.0 to 200.0, 300.0 to 300.0, 300.0 to 600.0,
+                        600.0 to 600.0, 600.0 to 1200.0, 800.0 to 800.0
+                    ).forEach { (w, h) ->
+                        AssistChip(
+                            onClick = { tileW = w; tileH = h },
+                            label = { Text("${w.toInt()}×${h.toInt()}", fontSize = 11.sp) }
+                        )
+                    }
+                }
+                NumberStepperField("Ширина плитки", tileW, { tileW = it }, 10.0, suffix = "мм", decimals = 1, min = 5.0, max = 4000.0)
+                NumberStepperField("Длина плитки", tileH, { tileH = it }, 10.0, suffix = "мм", decimals = 1, min = 5.0, max = 4000.0)
+                NumberStepperField("Толщина плитки", tileThickness, { tileThickness = it }, 0.5, suffix = "мм", decimals = 1, min = 2.0, max = 40.0)
+                NumberStepperField("Ширина шва", grout, { grout = it }, 0.5, suffix = "мм", decimals = 1, min = 0.0, max = 30.0)
+
+                Text("Запас на подрезку и бой:", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    WASTE_PRESETS.forEach { w ->
+                        AssistChip(
+                            onClick = { wastePercent = w.percent },
+                            label = { Text("${w.title} ${w.percent.toInt()}%", fontSize = 10.sp) }
+                        )
+                    }
+                }
+                NumberStepperField("Запас", wastePercent, { wastePercent = it }, 1.0, suffix = "%", decimals = 1, min = 0.0, max = 60.0)
+                NumberStepperField("Штук в упаковке", piecesPerPack, { piecesPerPack = it }, 1.0, suffix = "шт", decimals = 0, min = 0.0, max = 200.0)
+                NumberStepperField("Цена за м²", tilePriceM2, { tilePriceM2 = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 500000.0)
+                NumberStepperField("или цена за штуку", tilePricePiece, { tilePricePiece = it }, 10.0, suffix = "₽", decimals = 0, min = 0.0, max = 500000.0)
+                NumberStepperField("Плотность материала", density, { density = it }, 50.0, suffix = "кг/м³", decimals = 0, min = 500.0, max = 4000.0)
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                InfoRow("Площадь с запасом", "${fmtNum(tile.areaWithWasteM2, 2)} м²")
+                InfoRow("Количество", "${tile.pieces} шт", true)
+                if (tile.packs > 0) InfoRow("Упаковок", "${tile.packs} шт")
+                InfoRow("Вес плитки", "${fmtNum(tile.weightKg, 0)} кг")
+                InfoRow("Стоимость", money(tile.cost), true)
+            }
+        }
+
+        // ---------------------------------------------------------- Клей
+        item {
+            CalcCard("Плиточный клей", Icons.Default.Layers) {
+                Text("Зуб гребёнки (задаёт базовый расход):", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    TROWEL_TABLE.forEachIndexed { i, n ->
+                        FilterChip(
+                            selected = notchIndex == i,
+                            onClick = { notchIndex = i; glueKgM2 = n.consumptionKgM2 },
+                            label = { Text("${n.notchMm.toInt()} мм", fontSize = 11.sp) }
+                        )
+                    }
+                }
+                val n = TROWEL_TABLE[notchIndex.coerceIn(0, TROWEL_TABLE.lastIndex)]
+                Text(
+                    "Зуб ${n.notchMm.toInt()} мм → слой ${n.layerMm}, база ${fmtNum(n.consumptionKgM2, 2)} кг/м², " +
+                        "формат ${n.tileFormat}.",
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val rec = suggestNotch(max(tileW, tileH))
+                if (rec.notchMm != n.notchMm) {
+                    Text(
+                        "Для формата ${tileW.toInt()}×${tileH.toInt()} обычно берут зуб ${rec.notchMm.toInt()} мм.",
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                NumberStepperField("Расход клея", glueKgM2, { glueKgM2 = it }, 0.25, suffix = "кг/м²", decimals = 2, min = 0.5, max = 30.0)
+                NumberStepperField("Перепад основания (добор слоя)", levelingMm, { levelingMm = it }, 1.0, suffix = "мм", decimals = 1, min = 0.0, max = 50.0)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(backButtering, { backButtering = it })
+                    Text("Двойное нанесение (крупный формат) ×1,6", fontSize = 12.sp)
+                }
+                NumberStepperField("Вес мешка", glueBagKg, { glueBagKg = it }, 5.0, suffix = "кг", decimals = 0, min = 1.0, max = 100.0)
+                NumberStepperField("Цена мешка", gluePrice, { gluePrice = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
+                NumberStepperField("Запас", glueReserve, { glueReserve = it }, 5.0, suffix = "%", decimals = 0, min = 0.0, max = 50.0)
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                InfoRow("Фактический расход", "${fmtNum(glue.totalKgM2, 2)} кг/м²")
+                InfoRow("Всего клея", "${fmtNum(glue.totalKg, 1)} кг")
+                InfoRow("Мешков", "${glue.bags} шт", true)
+                InfoRow("Стоимость", money(glue.cost), true)
+            }
+        }
+
+        // ---------------------------------------------------------- Затирка
+        item {
+            CalcCard("Затирка швов", Icons.Default.BorderAll) {
+                Text(
+                    "Расход по формуле (A+B)·C·D·ρ/(A·B): стороны плитки, ширина шва, " +
+                        "глубина шва (толщина плитки) и плотность затирки.",
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                NumberStepperField("Плотность затирки", groutDensity, { groutDensity = it }, 0.1, suffix = "г/см³", decimals = 2, min = 1.0, max = 2.5)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(groutEpoxy, { groutEpoxy = it })
+                    Text("Эпоксидная (расход ×1,4)", fontSize = 12.sp)
+                }
+                NumberStepperField("Запас", groutReserve, { groutReserve = it }, 5.0, suffix = "%", decimals = 0, min = 0.0, max = 50.0)
+                NumberStepperField("Вес упаковки", groutPackKg, { groutPackKg = it }, 0.5, suffix = "кг", decimals = 1, min = 0.0, max = 30.0)
+                NumberStepperField("Цена за кг", groutPriceKg, { groutPriceKg = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                InfoRow("Расход", "${fmtNum(groutRes.kgPerM2, 3)} кг/м²")
+                InfoRow("Всего затирки", "${fmtNum(groutRes.totalKg, 2)} кг", true)
+                if (groutRes.packs > 0) InfoRow("Упаковок", "${groutRes.packs} шт")
+                InfoRow("Погонаж швов", "${fmtNum(groutRes.jointLengthM, 0)} п.м.")
+                InfoRow("Стоимость", money(groutRes.cost), true)
+            }
+        }
+
+        // ---------------------------------------------------------- Основание
+        item {
+            CalcCard("Подготовка основания", Icons.Default.Foundation) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(primerOn, { primerOn = it })
+                    Text("Грунтовка", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+                AnimatedVisibility(primerOn) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        NumberStepperField("Расход на слой", primerKg, { primerKg = it }, 0.05, suffix = "кг/м²", decimals = 2, min = 0.01, max = 2.0)
+                        NumberStepperField("Слоёв", primerLayers, { primerLayers = it }, 1.0, suffix = "шт", decimals = 0, min = 1.0, max = 5.0)
+                        NumberStepperField("Канистра", primerPackKg, { primerPackKg = it }, 1.0, suffix = "кг", decimals = 1, min = 0.5, max = 50.0)
+                        NumberStepperField("Цена канистры", primerPrice, { primerPrice = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
+                        InfoRow("Итого грунта", "${fmtNum(primer.totalKg, 2)} кг · ${primer.buckets} шт · ${money(primer.cost)}", true)
+                    }
+                }
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(waterproofOn, { waterproofOn = it })
+                    Text("Гидроизоляция", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+                AnimatedVisibility(waterproofOn) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        NumberStepperField("Расход на слой", wpKg, { wpKg = it }, 0.1, suffix = "кг/м²", decimals = 2, min = 0.1, max = 5.0)
+                        NumberStepperField("Слоёв", wpLayers, { wpLayers = it }, 1.0, suffix = "шт", decimals = 0, min = 1.0, max = 5.0)
+                        NumberStepperField("Ведро", wpPackKg, { wpPackKg = it }, 1.0, suffix = "кг", decimals = 1, min = 1.0, max = 50.0)
+                        NumberStepperField("Цена ведра", wpPrice, { wpPrice = it }, 100.0, suffix = "₽", decimals = 0, min = 0.0, max = 500000.0)
+                        InfoRow("Итого состава", "${fmtNum(waterproof.totalKg, 2)} кг · ${waterproof.buckets} шт · ${money(waterproof.cost)}", true)
+                        InfoRow("Гидролента по периметру", "${fmtNum(waterproof.tapeM, 1)} п.м.")
+                    }
+                }
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(screedOn, { screedOn = it })
+                    Text("Стяжка / наливной пол", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+                AnimatedVisibility(screedOn) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        NumberStepperField("Толщина слоя", screedThickness, { screedThickness = it }, 1.0, suffix = "мм", decimals = 1, min = 1.0, max = 200.0)
+                        NumberStepperField("Расход на 1 мм", screedKgMm, { screedKgMm = it }, 0.1, suffix = "кг/м²·мм", decimals = 2, min = 0.5, max = 3.0)
+                        NumberStepperField("Вес мешка", screedBagKg, { screedBagKg = it }, 5.0, suffix = "кг", decimals = 0, min = 1.0, max = 100.0)
+                        NumberStepperField("Цена мешка", screedPrice, { screedPrice = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
+                        InfoRow("Расход", "${fmtNum(screed.kgPerM2, 1)} кг/м²")
+                        InfoRow("Итого смеси", "${fmtNum(screed.totalKg, 0)} кг · ${screed.bags} меш. · ${money(screed.cost)}", true)
+                        Text(
+                            "Ровнитель — примерно 1,5–1,8 кг/м² на каждый миллиметр слоя, " +
+                                "цементно-песчаная стяжка — около 2 кг.",
+                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
 
-        // --- Interactive Tile Layout Visualizer ---
+        // ---------------------------------------------------------- Расходники
         item {
-            TileLayoutVisualizer(
-                tileWidthCm = tileWidth,
-                tileHeightCm = tileHeight,
-                groutWidthMm = groutWidth
-            )
-        }
+            CalcCard("Крестики и СВП", Icons.Default.Extension) {
+                NumberStepperField("Крестиков на плитку", crossesPerTile, { crossesPerTile = it }, 0.5, suffix = "шт", decimals = 1, min = 0.0, max = 8.0)
+                NumberStepperField("Зажимов СВП на плитку", clipsPerTile, { clipsPerTile = it }, 0.5, suffix = "шт", decimals = 1, min = 0.0, max = 12.0)
+                NumberStepperField("Выработка за смену", dailyOutputM2, { dailyOutputM2 = it }, 0.5, suffix = "м²", decimals = 1, min = 0.5, max = 100.0)
+                NumberStepperField("Цена крестика", priceCross, { priceCross = it }, 0.1, suffix = "₽", decimals = 2, min = 0.0, max = 100.0)
+                NumberStepperField("Цена зажима", priceClip, { priceClip = it }, 0.5, suffix = "₽", decimals = 2, min = 0.0, max = 100.0)
+                NumberStepperField("Цена клина", priceWedge, { priceWedge = it }, 0.5, suffix = "₽", decimals = 2, min = 0.0, max = 100.0)
 
-        // --- Detailed Results Breakdown ---
-        item {
-            Text(
-                text = "Детализация расчетов",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                // Tiles Card
-                MaterialBreakdownCard(
-                    title = "Керамогранит / Плитка (+10% запас)",
-                    mainQuantity = "%d шт.".format(results.tileCount),
-                    subDetails = "Площадь с запасом: %.2f м²".format(results.tileSqMNeededWithMargin),
-                    cost = results.tileCost,
-                    icon = Icons.Default.Dashboard
-                )
-
-                // Glue Card
-                MaterialBreakdownCard(
-                    title = "Плиточный клей",
-                    mainQuantity = "%d меш. (%d кг)".format(results.glueBagsNeeded, (results.glueBagsNeeded * glueBagWeight).toInt()),
-                    subDetails = "Расход: $glueCons кг/м²",
-                    cost = results.glueCost,
-                    icon = Icons.Default.Layers
-                )
-
-                // Grout Card
-                MaterialBreakdownCard(
-                    title = "Затирка для швов",
-                    mainQuantity = "%.1f кг".format(results.groutKgNeeded),
-                    subDetails = "Шов: $groutWidth мм, глубина: 8мм",
-                    cost = results.groutCost,
-                    icon = Icons.Default.GridOn
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                InfoRow("Крестики", "${consum.crosses} шт")
+                InfoRow("Зажимы (одноразовые)", "${consum.clips} шт", true)
+                InfoRow("Клинья (многоразовые)", "${consum.wedges} шт")
+                InfoRow("Стоимость", money(consum.cost))
+                Text(
+                    "Клинья снимают на следующий день и используют повторно — их берут " +
+                        "на дневную выработку, а не на весь объём.",
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
-        // --- Calculation History ---
+        // ---------------------------------------------------------- Погонаж
+        item {
+            CalcCard("Плинтус / профиль / уголок", Icons.Default.Straighten) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(trimOn, { trimOn = it })
+                    Text("Считать погонаж", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+                AnimatedVisibility(trimOn) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        NumberStepperField("Длина элемента", trimPieceM, { trimPieceM = it }, 0.1, suffix = "м", decimals = 2, min = 0.1, max = 10.0)
+                        NumberStepperField("Запас", trimReserve, { trimReserve = it }, 5.0, suffix = "%", decimals = 0, min = 0.0, max = 50.0)
+                        NumberStepperField("Цена элемента", trimPrice, { trimPrice = it }, 50.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
+                        InfoRow("Длина с запасом", "${fmtNum(trim.lengthM, 2)} м")
+                        InfoRow("Элементов", "${trim.pieces} шт", true)
+                        InfoRow("Стоимость", money(trim.cost))
+                    }
+                }
+            }
+        }
+
+        // ---------------------------------------------------------- Работа
+        item {
+            CalcCard("Работа и логистика", Icons.Default.Engineering) {
+                NumberStepperField("Цена работы за м²", workPriceM2, { workPriceM2 = it }, 100.0, suffix = "₽", decimals = 0, min = 0.0, max = 100000.0)
+                NumberStepperField("Выработка за смену", dailyOutputM2, { dailyOutputM2 = it }, 0.5, suffix = "м²", decimals = 1, min = 0.5, max = 100.0)
+                NumberStepperField("Сколько унести за ходку", tripCapacity, { tripCapacity = it }, 10.0, suffix = "кг", decimals = 0, min = 10.0, max = 1000.0)
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                InfoRow("Смен", "${fmtNum(work.days, 1)}")
+                InfoRow("Работа", money(work.laborCost), true)
+                InfoRow("Общий вес", "${fmtNum(totals.totalWeightKg, 0)} кг")
+                InfoRow("Ходок на этаж", "${totals.trips}")
+            }
+        }
+
+        // ---------------------------------------------------------- Сохранение
+        item {
+            Button(
+                onClick = { showSaveDialog = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Сохранить расчёт")
+            }
+        }
+
+        // ---------------------------------------------------------- История
         if (calculations.isNotEmpty()) {
             item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.History,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "История расчетов",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
+                Text(
+                    "История расчётов",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
-
-            items(calculations) { calc ->
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            focusManager.clearFocus()
-                            // Load saved calculation back into active fields
-                            areaInput = calc.areaSqM.toString()
-                            tileWidthInput = calc.tileWidthCm.toString()
-                            tileHeightInput = calc.tileHeightCm.toString()
-                            groutWidthInput = calc.groutWidthMm.toString()
-                            tilePriceInput = calc.tilePricePerSqM.toString()
-                            glueConsInput = calc.glueConsKgPerSqM.toString()
-                            glueBagWeightInput = calc.glueBagWeightKg.toString()
-                            gluePriceInput = calc.gluePricePerBag.toString()
-                            groutPriceInput = calc.groutPricePerKg.toString()
-                        }
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = calc.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "Плитка ${calc.tileWidthCm.toInt()}x${calc.tileHeightCm.toInt()} см | Шов ${calc.groutWidthMm} мм",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = "Материалы: %,.0f ₽".format(calc.calculatedTotalMaterialCost),
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        IconButton(
-                            onClick = { viewModel.deleteCalculation(calc.id) }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Delete,
-                                contentDescription = "Удалить расчет",
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                }
+            items(calculations, key = { it.id }) { c ->
+                HistoryCard(c) { viewModel.deleteCalculation(c.id) }
             }
         }
     }
 
-    // --- Save Dialog ---
     if (showSaveDialog) {
         AlertDialog(
             onDismissRequest = { showSaveDialog = false },
-            title = { Text("Сохранить этот расчет") },
+            title = { Text("Сохранить расчёт", fontWeight = FontWeight.Bold) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Введите название для быстрого поиска в истории:")
-                    OutlinedTextField(
-                        value = calcNameInput,
-                        onValueChange = { calcNameInput = it },
-                        label = { Text("Название расчета") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
+                OutlinedTextField(
+                    value = calcName,
+                    onValueChange = { calcName = it },
+                    label = { Text("Название (адрес, объект)") },
+                    singleLine = true
+                )
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        if (calcNameInput.isNotBlank()) {
-                            viewModel.saveCalculation(
-                                name = calcNameInput,
-                                areaSqM = area,
-                                tileWidthCm = tileWidth,
-                                tileHeightCm = tileHeight,
-                                groutWidthMm = groutWidth,
-                                tilePricePerSqM = tilePrice,
-                                glueConsKgPerSqM = glueCons,
-                                glueBagWeightKg = glueBagWeight,
-                                gluePricePerBag = gluePrice,
-                                groutPricePerKg = groutPrice
-                            )
-                            showSaveDialog = false
-                        }
-                    }
-                ) {
-                    Text("Сохранить")
-                }
+                Button(onClick = {
+                    viewModel.saveCalculation(
+                        name = calcName.ifBlank { "Объект ${fmtNum(areaM2, 1)} м²" },
+                        areaSqM = areaM2,
+                        tileWidthCm = tileW / 10.0,
+                        tileHeightCm = tileH / 10.0,
+                        groutWidthMm = grout,
+                        tilePricePerSqM = tilePriceM2,
+                        glueConsKgPerSqM = glue.totalKgM2,
+                        glueBagWeightKg = glueBagKg,
+                        gluePricePerBag = gluePrice,
+                        groutPricePerKg = groutPriceKg
+                    )
+                    calcName = ""
+                    showSaveDialog = false
+                }) { Text("Сохранить") }
             },
-            dismissButton = {
-                TextButton(onClick = { showSaveDialog = false }) {
-                    Text("Отмена")
-                }
-            }
+            dismissButton = { TextButton(onClick = { showSaveDialog = false }) { Text("Отмена") } }
         )
     }
 }
 
+// =====================================================================================
+
 @Composable
-fun MaterialBreakdownCard(
+private fun CalcCard(
     title: String,
-    mainQuantity: String,
-    subDetails: String,
-    cost: Double,
-    icon: androidx.compose.ui.graphics.vector.ImageVector
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    initiallyExpanded: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit
 ) {
+    var expanded by remember { mutableStateOf(initiallyExpanded) }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp)
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(MaterialTheme.shapes.small)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
-                contentAlignment = Alignment.Center
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                Modifier.fillMaxWidth().clickable { expanded = !expanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(title, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
                 Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Свернуть" else "Развернуть"
                 )
             }
-            Spacer(modifier = Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = mainQuantity,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = subDetails,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            AnimatedVisibility(expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = "%,.0f ₽".format(cost),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.ExtraBold,
-                color = MaterialTheme.colorScheme.secondary
-            )
         }
     }
 }
 
-// Helpers for input parsers
-private fun tileWidthCmInputParser(input: String): Double {
-    val clean = input.replace(",", ".")
-    return clean.toDoubleOrNull() ?: 0.0
-}
-
-private fun groutWidthInputParser(input: String): Double {
-    val clean = input.replace(",", ".")
-    return clean.toDoubleOrNull() ?: 0.0
-}
-
-enum class LayoutPattern {
-    GRID,
-    BRICK_50,
-    BRICK_33,
-    DIAGONAL
-}
-
 @Composable
-fun TileLayoutVisualizer(
-    tileWidthCm: Double,
-    tileHeightCm: Double,
-    groutWidthMm: Double,
-    modifier: Modifier = Modifier
-) {
-    var pattern by remember { mutableStateOf(LayoutPattern.GRID) }
-    var shiftX by remember { mutableStateOf(0f) } // in percent (0 to 100)
-    var shiftY by remember { mutableStateOf(0f) } // in percent (0 to 100)
-
-    val validTileWidth = if (tileWidthCm > 0) tileWidthCm else 30.0
-    val validTileHeight = if (tileHeightCm > 0) tileHeightCm else 60.0
-    val validGroutWidth = groutWidthMm.coerceAtLeast(0.0)
-
-    val tileColor = MaterialTheme.colorScheme.primaryContainer
-    val groutColor = MaterialTheme.colorScheme.primary
-
+private fun HistoryCard(c: Calculation, onDelete: () -> Unit) {
+    val sdf = remember { SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()) }
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+        Row(
+            Modifier.padding(12.dp).fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.GridOn,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
+            Column(Modifier.weight(1f)) {
+                Text(c.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 Text(
-                    text = "Интерактивная раскладка (Пол / Стены)",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    "${fmtNum(c.areaSqM, 2)} м² · ${c.tileWidthCm.toInt()}×${c.tileHeightCm.toInt()} см · " +
+                        "${c.calculatedTileCount} шт · ${c.calculatedGlueBagsNeeded} меш.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Text(sdf.format(Date(c.timestamp)), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-
             Text(
-                text = "Настройте центровку швов с помощью ползунков, чтобы избежать узких полосок-обрезков у стен.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                money(c.calculatedTotalMaterialCost),
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.primary
             )
-
-            // Pattern Selector tabs
-            ScrollableTabRow(
-                selectedTabIndex = pattern.ordinal,
-                edgePadding = 0.dp,
-                containerColor = Color.Transparent,
-                divider = {},
-                indicator = {}
-            ) {
-                LayoutPattern.values().forEach { pat ->
-                    val selected = pattern == pat
-                    Tab(
-                        selected = selected,
-                        onClick = { pattern = pat },
-                        modifier = Modifier
-                            .padding(horizontal = 4.dp, vertical = 2.dp)
-                            .clip(MaterialTheme.shapes.small)
-                            .background(
-                                if (selected) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                            ),
-                        text = {
-                            Text(
-                                text = when (pat) {
-                                    LayoutPattern.GRID -> "Сетка"
-                                    LayoutPattern.BRICK_50 -> "Разбежка 50%"
-                                    LayoutPattern.BRICK_33 -> "Разбежка 33%"
-                                    LayoutPattern.DIAGONAL -> "Диагональ"
-                                },
-                                color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    )
-                }
-            }
-
-            // Canvas Container
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(200.dp)
-                    .background(
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
-                        shape = MaterialTheme.shapes.medium
-                    )
-                    .border(
-                        1.dp,
-                        MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                        shape = MaterialTheme.shapes.medium
-                    )
-                    .padding(12.dp)
-            ) {
-                Canvas(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    val canvasW = size.width
-                    val canvasH = size.height
-
-                    // Simulated floor region is 240cm x 160cm
-                    val simW = 240f
-                    val simH = 160f
-
-                    // Aspect ratio fitting
-                    val scaleX = canvasW / simW
-                    val scaleY = canvasH / simH
-                    val scale = minOf(scaleX, scaleY)
-
-                    val roomW = simW * scale
-                    val roomH = simH * scale
-
-                    // Centering floor rectangle in the Canvas
-                    val startX = (canvasW - roomW) / 2f
-                    val startY = (canvasH - roomH) / 2f
-
-                    // Draw outer floor rect fill background (darker background for joint lines)
-                    drawRect(
-                        color = groutColor.copy(alpha = 0.3f),
-                        topLeft = Offset(startX, startY),
-                        size = Size(roomW, roomH)
-                    )
-
-                    clipRect(
-                        left = startX,
-                        top = startY,
-                        right = startX + roomW,
-                        bottom = startY + roomH
-                    ) {
-                        // Calculate shift offset in cm based on slider percentage
-                        val tileWPlusGrout = (validTileWidth + (validGroutWidth / 10.0)).toFloat()
-                        val tileHPlusGrout = (validTileHeight + (validGroutWidth / 10.0)).toFloat()
-
-                        val actualShiftX = (shiftX / 100f) * tileWPlusGrout
-                        val actualShiftY = (shiftY / 100f) * tileHPlusGrout
-
-                        val drawTiling = {
-                            // Start tiling from negative coordinates to fully cover shift range
-                            val minCol = -5
-                            val maxCol = (simW / tileWPlusGrout).toInt() + 5
-                            val minRow = -5
-                            val maxRow = (simH / tileHPlusGrout).toInt() + 5
-
-                            for (row in minRow..maxRow) {
-                                for (col in minCol..maxCol) {
-                                    // Base tile positions in cm
-                                    var tileX = col * tileWPlusGrout + actualShiftX
-                                    val tileY = row * tileHPlusGrout + actualShiftY
-
-                                    // Apply offset depending on pattern
-                                    if (pattern == LayoutPattern.BRICK_50) {
-                                        tileX += (kotlin.math.abs(row) % 2) * 0.5f * tileWPlusGrout
-                                    } else if (pattern == LayoutPattern.BRICK_33) {
-                                        tileX += (kotlin.math.abs(row) % 3) * 0.33f * tileWPlusGrout
-                                    }
-
-                                    // Map to canvas pixel space
-                                    val pxX = startX + tileX * scale
-                                    val pxY = startY + tileY * scale
-                                    val pxW = validTileWidth.toFloat() * scale
-                                    val pxH = validTileHeight.toFloat() * scale
-
-                                    // Draw tile face
-                                    drawRect(
-                                        color = tileColor,
-                                        topLeft = Offset(pxX, pxY),
-                                        size = Size(pxW, pxH)
-                                    )
-
-                                    // Draw tile grout borders
-                                    drawRect(
-                                        color = groutColor,
-                                        topLeft = Offset(pxX, pxY),
-                                        size = Size(pxW, pxH),
-                                        style = Stroke(width = (validGroutWidth.toFloat() / 10f * scale).coerceAtLeast(1.5f))
-                                    )
-                                }
-                            }
-                        }
-
-                        if (pattern == LayoutPattern.DIAGONAL) {
-                            withTransform({
-                                // Rotate around center of simulated room
-                                rotate(45f, pivot = Offset(startX + roomW / 2f, startY + roomH / 2f))
-                            }) {
-                                drawTiling()
-                            }
-                        } else {
-                            drawTiling()
-                        }
-                    }
-
-                    // Draw outer border of the room
-                    drawRect(
-                        color = groutColor,
-                        topLeft = Offset(startX, startY),
-                        size = Size(roomW, roomH),
-                        style = Stroke(width = 3.dp.toPx())
-                    )
-                }
-            }
-
-            // Sliders for Centering adjustments
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Смещение швов по горизонтали",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "${shiftX.toInt()}%",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Slider(
-                    value = shiftX,
-                    onValueChange = { shiftX = it },
-                    valueRange = 0f..100f,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Смещение швов по вертикали",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "${shiftY.toInt()}%",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Slider(
-                    value = shiftY,
-                    onValueChange = { shiftY = it },
-                    valueRange = 0f..100f,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-
-            // Legend / Specs
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "Имитация зоны: 2.4 x 1.6 м",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "Плитка: ${validTileWidth.toInt()}x${validTileHeight.toInt()} см",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Outlined.Delete, contentDescription = "Удалить", tint = MaterialTheme.colorScheme.error)
             }
         }
     }

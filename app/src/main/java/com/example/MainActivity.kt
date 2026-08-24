@@ -16,7 +16,6 @@ import com.example.ui.TileViewModel
 import com.example.ui.screens.CalculatorScreen
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.OrdersScreen
-import com.example.ui.screens.PortfolioScreen
 import com.example.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
@@ -35,8 +34,7 @@ enum class TileTab {
     DASHBOARD,
     CAD_PLAN,
     CALCULATOR,
-    ORDERS,
-    PORTFOLIO
+    ORDERS
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,7 +53,6 @@ fun MainAppScreen() {
                             TileTab.CAD_PLAN -> "CAD Чертеж & Раскладка"
                             TileTab.CALCULATOR -> "Материалы"
                             TileTab.ORDERS -> "Календарь заказов"
-                            TileTab.PORTFOLIO -> "Портфолио работ"
                         },
                         fontWeight = FontWeight.Black
                     )
@@ -115,17 +112,6 @@ fun MainAppScreen() {
                         )
                     }
                 )
-                NavigationBarItem(
-                    selected = currentTab == TileTab.PORTFOLIO,
-                    onClick = { currentTab = TileTab.PORTFOLIO },
-                    label = { Text("Портфолио") },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.Image,
-                            contentDescription = "Портфолио мастера"
-                        )
-                    }
-                )
             }
         },
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -151,9 +137,6 @@ fun MainAppScreen() {
                 }
                 TileTab.ORDERS -> {
                     OrdersScreen(viewModel = viewModel)
-                }
-                TileTab.PORTFOLIO -> {
-                    PortfolioScreen()
                 }
             }
         }

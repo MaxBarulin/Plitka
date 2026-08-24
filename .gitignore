@@ -16,3 +16,9 @@
 local.properties
 .env
 debug.keystore
+
+# Локальный тулчейн и ключи подписи
+my-upload-key.jks
+keystore-info.txt
+
+/apk/

@@ -1,1087 +1,1318 @@
 package com.example.ui.screens
 
-import android.graphics.PointF
-import androidx.compose.animation.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.*
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipPath
-import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.TileViewModel
-import kotlin.math.*
+import com.example.ui.cad.*
+import kotlin.math.max
+import kotlin.math.min
 
-enum class CadMode {
-    ROOM_PERIMETER, // Editing walls, vertices, obstacles
-    TILE_LAYOUT     // Positioning tile grid, rotating, analyzing cuts
-}
+private enum class CadMode { ROOM, TILE }
 
-enum class TilePatternType {
-    STRAIGHT,       // Шов в шов
-    OFFSET_HALF,    // Разбежка 50%
-    OFFSET_THIRD,   // Разбежка 33%
-    HERRINGBONE,    // Елочка
-    DIAGONAL_45     // Диагональ 45°
-}
+private enum class DragMode { PAN, EDIT }
 
-data class RoomVertex(
-    val id: String = java.util.UUID.randomUUID().toString(),
-    var x: Float, // in meters
-    var y: Float  // in meters
+private data class RoomSnapshot(
+    val vertices: List<CadVertex>,
+    val walls: Map<String, WallProps>,
+    val obstacles: List<CadObstacle>
 )
 
-data class RoomObstacle(
-    val id: String = java.util.UUID.randomUUID().toString(),
-    var x: Float,      // top-left x in meters
-    var y: Float,      // top-left y in meters
-    var width: Float,  // width in meters
-    var height: Float, // height in meters
-    val name: String = "Короб/Колонна"
-)
+private val LINEAR_STEPS = listOf(1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 500.0)
+private val ANGLE_STEPS = listOf(0.1, 0.5, 1.0, 5.0, 15.0, 45.0, 90.0)
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CadLayoutScreen(
     viewModel: TileViewModel,
     modifier: Modifier = Modifier
 ) {
-    var cadMode by remember { mutableStateOf(CadMode.ROOM_PERIMETER) }
-    
-    // Room polygon vertices (in meters)
-    var vertices by remember {
-        mutableStateOf(
-            listOf(
-                RoomVertex(x = 0.5f, y = 0.5f),
-                RoomVertex(x = 3.5f, y = 0.5f),
-                RoomVertex(x = 3.5f, y = 2.0f),
-                RoomVertex(x = 2.3f, y = 2.0f),
-                RoomVertex(x = 2.3f, y = 3.2f),
-                RoomVertex(x = 0.5f, y = 3.2f)
-            )
-        )
+    // ---------------------------------------------------------------- состояние модели
+    var vertices by remember { mutableStateOf(rectangleRoom(3400.0, 2200.0)) }
+    var walls by remember { mutableStateOf<Map<String, WallProps>>(emptyMap()) }
+    var obstacles by remember { mutableStateOf<List<CadObstacle>>(emptyList()) }
+
+    val undoStack = remember { mutableStateListOf<RoomSnapshot>() }
+    fun snapshot() {
+        undoStack.add(RoomSnapshot(vertices, walls, obstacles))
+        if (undoStack.size > 40) undoStack.removeAt(0)
+    }
+    fun undo() {
+        val s = undoStack.removeLastOrNull() ?: return
+        vertices = s.vertices; walls = s.walls; obstacles = s.obstacles
     }
 
-    // Box obstacles (e.g. duct, column, riser) in meters
-    var obstacles by remember {
-        mutableStateOf(
-            listOf(
-                RoomObstacle(x = 2.7f, y = 0.5f, width = 0.6f, height = 0.5f, name = "Венткороб")
-            )
-        )
+    // ---------------------------------------------------------------- выбор и режимы
+    var mode by remember { mutableStateOf(CadMode.ROOM) }
+    var dragMode by remember { mutableStateOf(DragMode.PAN) }
+    var selVertex by remember { mutableStateOf<Int?>(null) }
+    var selWall by remember { mutableStateOf<Int?>(null) }
+    var selObstacle by remember { mutableStateOf<String?>(null) }
+    var roomTab by remember { mutableStateOf(0) }
+    var tileTab by remember { mutableStateOf(0) }
+    var panelExpanded by remember { mutableStateOf(true) }
+
+    // ---------------------------------------------------------------- шаги
+    var linStep by remember { mutableStateOf(10.0) }
+    var angStep by remember { mutableStateOf(1.0) }
+    var snapToStep by remember { mutableStateOf(true) }
+
+    // ---------------------------------------------------------------- плитка
+    var tileW by remember { mutableStateOf(600.0) }
+    var tileH by remember { mutableStateOf(600.0) }
+    var grout by remember { mutableStateOf(2.0) }
+    var pattern by remember { mutableStateOf(TilePattern.STRAIGHT) }
+    var offsetPercent by remember { mutableStateOf(50.0) }
+    var tileRotation by remember { mutableStateOf(0.0) }
+    var originMode by remember { mutableStateOf(OriginMode.CORNER) }
+    var originCorner by remember { mutableStateOf(0) }
+    var originOffX by remember { mutableStateOf(0.0) }
+    var originOffY by remember { mutableStateOf(0.0) }
+    var pointX by remember { mutableStateOf(0.0) }
+    var pointY by remember { mutableStateOf(0.0) }
+    var showTiles by remember { mutableStateOf(true) }
+    var highlightCuts by remember { mutableStateOf(true) }
+    var showLabels by remember { mutableStateOf(true) }
+    var showAngles by remember { mutableStateOf(true) }
+
+    // ---------------------------------------------------------------- вид
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+    var pxPerMm by remember { mutableStateOf(0.09f) }
+    var viewCX by remember { mutableStateOf(1700.0) }
+    var viewCY by remember { mutableStateOf(1100.0) }
+    var didFit by remember { mutableStateOf(false) }
+    var showStats by remember { mutableStateOf(false) }
+    var showRectDialog by remember { mutableStateOf(false) }
+
+    fun fitView() {
+        if (canvasSize.width == 0 || canvasSize.height == 0) return
+        val b = boundsOf(vertices)
+        val w = max(b.width, 500.0)
+        val h = max(b.height, 500.0)
+        val sx = canvasSize.width / (w * 1.25)
+        val sy = canvasSize.height / (h * 1.25)
+        pxPerMm = min(sx, sy).toFloat().coerceIn(0.005f, 6f)
+        viewCX = b.cx
+        viewCY = b.cy
     }
 
-    // Selected vertex for manual coordinate editing or deletion
-    var selectedVertexIndex by remember { mutableStateOf<Int?>(null) }
-    var selectedObstacleId by remember { mutableStateOf<String?>(null) }
-
-    // Tile parameters
-    var tileWidthCm by remember { mutableStateOf(60f) }
-    var tileHeightCm by remember { mutableStateOf(60f) }
-    var groutWidthMm by remember { mutableStateOf(2.0f) }
-    var tilePattern by remember { mutableStateOf(TilePatternType.STRAIGHT) }
-
-    // Grid placement in meters and degrees
-    var gridOriginX by remember { mutableStateOf(0.5f) } // meters
-    var gridOriginY by remember { mutableStateOf(0.5f) } // meters
-    var gridRotationDeg by remember { mutableStateOf(0f) }
-
-    // Canvas viewport transformations (pan and zoom)
-    var scale by remember { mutableStateOf(1.0f) }
-    var panOffset by remember { mutableStateOf(Offset(0f, 0f)) }
-
-    // Info sheet / bottom sheet
-    var showStatsDialog by remember { mutableStateOf(false) }
-
-    // Calculate room area and perimeter
-    val roomAreaSqM = remember(vertices, obstacles) {
-        calculatePolygonArea(vertices) - obstacles.sumOf { (it.width * it.height).toDouble() }.toFloat().coerceAtLeast(0f)
-    }
-    val roomPerimeterM = remember(vertices) {
-        calculatePolygonPerimeter(vertices)
+    LaunchedEffect(canvasSize) {
+        if (!didFit && canvasSize.width > 0) { fitView(); didFit = true }
     }
 
-    // Tile estimation count
-    val tileAreaSqM = (tileWidthCm / 100f) * (tileHeightCm / 100f)
-    val approxTileCount = if (tileAreaSqM > 0) ceil(roomAreaSqM / tileAreaSqM * 1.12f).toInt() else 0
-    val totalGroutLinearMeters = if (tileAreaSqM > 0) {
-        val totalTiles = roomAreaSqM / tileAreaSqM
-        val tilePerimeter = 2 * (tileWidthCm + tileHeightCm) / 100f
-        ((totalTiles * tilePerimeter) / 2f).roundToInt()
-    } else 0
-
-    Scaffold(
-        topBar = {
-            Surface(
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp
-            ) {
-                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = "CAD План & Раскладка",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = "S = ${"%.2f".format(roomAreaSqM)} м²  •  P = ${"%.2f".format(roomPerimeterM)} м",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        IconButton(
-                            onClick = { showStatsDialog = true },
-                            modifier = Modifier
-                                .background(MaterialTheme.colorScheme.primaryContainer, CircleShape)
-                                .size(40.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ListAlt,
-                                contentDescription = "Анализ подрезки",
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Mode Switcher Tab
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        SegmentedButton(
-                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                            onClick = { cadMode = CadMode.ROOM_PERIMETER },
-                            selected = cadMode == CadMode.ROOM_PERIMETER,
-                            icon = {
-                                Icon(Icons.Default.CropFree, contentDescription = null, modifier = Modifier.size(16.dp))
-                            }
-                        ) {
-                            Text("1. Контур комнаты", fontWeight = FontWeight.Bold)
-                        }
-                        SegmentedButton(
-                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                            onClick = { cadMode = CadMode.TILE_LAYOUT },
-                            selected = cadMode == CadMode.TILE_LAYOUT,
-                            icon = {
-                                Icon(Icons.Default.GridView, contentDescription = null, modifier = Modifier.size(16.dp))
-                            }
-                        ) {
-                            Text("2. Сетка плитки", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
+    // ---------------------------------------------------------------- производные значения
+    val originPoint = remember(originMode, originCorner, originOffX, originOffY, pointX, pointY, vertices) {
+        when (originMode) {
+            OriginMode.CORNER -> {
+                val v = vertices.getOrNull(originCorner.coerceIn(0, max(0, vertices.size - 1)))
+                if (v == null) P2(0.0, 0.0) else P2(v.x + originOffX, v.y + originOffY)
             }
-        },
-        bottomBar = {
-            Surface(
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 3.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (cadMode == CadMode.ROOM_PERIMETER) {
-                    CadRoomControls(
-                        vertices = vertices,
-                        onVerticesChange = { vertices = it },
-                        selectedVertexIndex = selectedVertexIndex,
-                        onSelectVertex = { selectedVertexIndex = it },
-                        obstacles = obstacles,
-                        onObstaclesChange = { obstacles = it }
-                    )
-                } else {
-                    CadTileControls(
-                        tileWidthCm = tileWidthCm,
-                        onTileWidthChange = { tileWidthCm = it },
-                        tileHeightCm = tileHeightCm,
-                        onTileHeightChange = { tileHeightCm = it },
-                        groutWidthMm = groutWidthMm,
-                        onGroutWidthChange = { groutWidthMm = it },
-                        tilePattern = tilePattern,
-                        onTilePatternChange = { tilePattern = it },
-                        gridRotationDeg = gridRotationDeg,
-                        onGridRotationChange = { gridRotationDeg = it },
-                        onAlignToCenter = {
-                            val bounds = getPolygonBoundingBox(vertices)
-                            gridOriginX = (bounds.left + bounds.right) / 2f
-                            gridOriginY = (bounds.top + bounds.bottom) / 2f
-                        },
-                        onAlignToOrigin = {
-                            if (vertices.isNotEmpty()) {
-                                gridOriginX = vertices[0].x
-                                gridOriginY = vertices[0].y
-                            }
-                        }
-                    )
+            OriginMode.CENTER -> {
+                val b = boundsOf(vertices)
+                P2(b.cx + originOffX, b.cy + originOffY)
+            }
+            OriginMode.POINT -> P2(pointX, pointY)
+        }
+    }
+
+    val spec = remember(tileW, tileH, grout, pattern, offsetPercent, tileRotation, originPoint) {
+        TileSpec(
+            widthMm = tileW,
+            heightMm = tileH,
+            groutMm = grout,
+            pattern = pattern,
+            offsetFraction = (offsetPercent / 100.0).coerceIn(0.0, 0.9),
+            rotationDeg = tileRotation,
+            originXMm = originPoint.x,
+            originYMm = originPoint.y
+        )
+    }
+
+    val layout = remember(vertices, obstacles, spec, showTiles) {
+        if (showTiles) generateLayout(vertices, obstacles, spec)
+        else TileLayout(emptyList(), LayoutStats(0, 0, 0, polygonAreaMm2(vertices), 0.0, emptyList(), false))
+    }
+
+    val areaMm2 = remember(vertices, obstacles) {
+        max(0.0, polygonAreaMm2(vertices) - obstacles.filter { it.subtract }.sumOf { it.w * it.h })
+    }
+    val perimMm = remember(vertices, walls) {
+        var p = 0.0
+        val n = vertices.size
+        for (i in 0 until n) {
+            if (walls[vertices[i].id]?.excluded == true) continue
+            p += distMm(vertices[i], vertices[(i + 1) % n])
+        }
+        p
+    }
+
+    val textMeasurer = rememberTextMeasurer()
+
+    fun snapVal(v: Double): Double = if (snapToStep && linStep > 0) Math.round(v / linStep) * linStep else v
+
+    // =================================================================================
+    Column(modifier = modifier.fillMaxSize()) {
+
+        // ------------------------------------------------------------------ Шапка
+        Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "S = ${fmtArea(areaMm2)} м²   P = ${fmtNum(perimMm / 1000.0, 2)} м   " +
+                                "углов: ${vertices.size}",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            if (mode == CadMode.ROOM)
+                                "Шаг ${fmtNum(linStep, 1)} мм / ${fmtNum(angStep, 1)}°"
+                            else
+                                "${fmtNum(tileW, 0)}×${fmtNum(tileH, 0)} мм, шов ${fmtNum(grout, 1)} мм, " +
+                                    "${fmtNum(tileRotation, 1)}°",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    ToolIconButton(Icons.Default.Undo, "Отменить", { undo() }, enabled = undoStack.isNotEmpty())
+                    Spacer(Modifier.width(4.dp))
+                    ToolIconButton(Icons.Default.CenterFocusStrong, "Вписать в экран", { fitView() })
+                    Spacer(Modifier.width(4.dp))
+                    ToolIconButton(Icons.Default.Assessment, "Спецификация", { showStats = true })
+                }
+
+                Spacer(Modifier.height(6.dp))
+
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    SegmentedButton(
+                        shape = SegmentedButtonDefaults.itemShape(0, 2),
+                        onClick = { mode = CadMode.ROOM },
+                        selected = mode == CadMode.ROOM
+                    ) { Text("1. Контур", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                    SegmentedButton(
+                        shape = SegmentedButtonDefaults.itemShape(1, 2),
+                        onClick = { mode = CadMode.TILE },
+                        selected = mode == CadMode.TILE
+                    ) { Text("2. Раскладка", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                 }
             }
         }
-    ) { padding ->
-        Box(
-            modifier = modifier
-                .fillMaxSize()
-                .padding(padding)
-                .background(Color(0xFF1E222A)) // High contrast dark CAD canvas
-        ) {
-            val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
-                scale = (scale * zoomChange).coerceIn(0.5f, 4.0f)
-                panOffset += panChange
-            }
 
-            // Primary CAD Drawing Canvas
+        // ------------------------------------------------------------------ Канва
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .background(CadColors.Background)
+                .onSizeChanged { canvasSize = it }
+        ) {
+            val transform = CadTransform(
+                centerPx = Offset(canvasSize.width / 2f, canvasSize.height / 2f),
+                viewCenterX = viewCX,
+                viewCenterY = viewCY,
+                pxPerMm = pxPerMm
+            )
+            // Жесты читают состояние напрямую: пересоздавать детекторы на каждый
+            // сдвиг вида нельзя — жест обрывался бы посреди движения.
+            fun screenToWorldX(px: Float) = viewCX + (px - canvasSize.width / 2f) / pxPerMm
+            fun screenToWorldY(py: Float) = viewCY + (py - canvasSize.height / 2f) / pxPerMm
+
             Canvas(
                 modifier = Modifier
                     .fillMaxSize()
-                    .transformable(state = transformableState)
-                    .pointerInput(cadMode, vertices, obstacles, scale, panOffset) {
-                        if (cadMode == CadMode.ROOM_PERIMETER) {
-                            detectTapGestures(
-                                onTap = { tapOffset ->
-                                    val canvasCenter = Offset(size.width / 2f, size.height / 2f)
-                                    val baseMetersPerPx = 0.008f / scale
-                                    val metersX = (tapOffset.x - canvasCenter.x - panOffset.x) * baseMetersPerPx + 2.0f
-                                    val metersY = (tapOffset.y - canvasCenter.y - panOffset.y) * baseMetersPerPx + 2.0f
-
-                                    // Check if tapped near any vertex to select it
-                                    var hitIndex: Int? = null
-                                    vertices.forEachIndexed { index, v ->
-                                        val dist = sqrt((v.x - metersX).pow(2) + (v.y - metersY).pow(2))
-                                        if (dist < 0.25f) {
-                                            hitIndex = index
+                    .pointerInput(dragMode) {
+                        if (dragMode == DragMode.PAN) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                val newScale = (pxPerMm * zoom).coerceIn(0.004f, 8f)
+                                pxPerMm = newScale
+                                viewCX -= pan.x / newScale
+                                viewCY -= pan.y / newScale
+                            }
+                        }
+                    }
+                    .pointerInput(dragMode, mode) {
+                        if (dragMode == DragMode.EDIT) {
+                            detectDragGestures { change, drag ->
+                                change.consume()
+                                val dxMm = drag.x / pxPerMm
+                                val dyMm = drag.y / pxPerMm
+                                if (mode == CadMode.ROOM) {
+                                    val vi = selVertex
+                                    val oi = selObstacle
+                                    if (vi != null && vi in vertices.indices) {
+                                        val cur = vertices[vi]
+                                        val nx = snapVal(cur.x + dxMm)
+                                        val ny = snapVal(cur.y + dyMm)
+                                        vertices = setVertexPosition(vertices, walls, vi, nx, ny)
+                                    } else if (oi != null) {
+                                        obstacles = obstacles.map {
+                                            if (it.id == oi) it.copy(x = snapVal(it.x + dxMm), y = snapVal(it.y + dyMm)) else it
                                         }
                                     }
-                                    selectedVertexIndex = hitIndex
-                                }
-                            )
-                        }
-                    }
-                    .pointerInput(cadMode, selectedVertexIndex, vertices, scale, panOffset) {
-                        if (cadMode == CadMode.ROOM_PERIMETER && selectedVertexIndex != null) {
-                            detectDragGestures { change, dragAmount ->
-                                change.consume()
-                                val baseMetersPerPx = 0.008f / scale
-                                val index = selectedVertexIndex ?: return@detectDragGestures
-                                if (index in vertices.indices) {
-                                    val updated = vertices.toMutableList()
-                                    val current = updated[index]
-                                    val newX = (current.x + dragAmount.x * baseMetersPerPx).coerceIn(0f, 10f)
-                                    val newY = (current.y + dragAmount.y * baseMetersPerPx).coerceIn(0f, 10f)
-                                    // Snap to 5cm grid
-                                    val snappedX = (round(newX * 20) / 20f)
-                                    val snappedY = (round(newY * 20) / 20f)
-                                    updated[index] = current.copy(x = snappedX, y = snappedY)
-                                    vertices = updated
+                                } else {
+                                    if (originMode == OriginMode.POINT) {
+                                        pointX = snapVal(pointX + dxMm)
+                                        pointY = snapVal(pointY + dyMm)
+                                    } else {
+                                        originOffX = snapVal(originOffX + dxMm)
+                                        originOffY = snapVal(originOffY + dyMm)
+                                    }
                                 }
                             }
-                        } else if (cadMode == CadMode.TILE_LAYOUT) {
-                            // Drag tile grid origin
-                            detectDragGestures { change, dragAmount ->
-                                change.consume()
-                                val baseMetersPerPx = 0.008f / scale
-                                gridOriginX += dragAmount.x * baseMetersPerPx
-                                gridOriginY += dragAmount.y * baseMetersPerPx
+                        }
+                    }
+                    .pointerInput(mode) {
+                        detectTapGestures { tap ->
+                            val wx = screenToWorldX(tap.x)
+                            val wy = screenToWorldY(tap.y)
+                            val hitMm = 22f / pxPerMm
+
+                            if (mode == CadMode.ROOM) {
+                                var bestV: Int? = null
+                                var bestD = hitMm.toDouble()
+                                vertices.forEachIndexed { i, v ->
+                                    val d = kotlin.math.hypot(v.x - wx, v.y - wy)
+                                    if (d < bestD) { bestD = d; bestV = i }
+                                }
+                                if (bestV != null) {
+                                    selVertex = bestV; selWall = null; selObstacle = null; roomTab = 0
+                                    return@detectTapGestures
+                                }
+                                var bestW: Int? = null
+                                var bestWD = hitMm.toDouble()
+                                val n = vertices.size
+                                for (i in 0 until n) {
+                                    val a = vertices[i]
+                                    val b = vertices[(i + 1) % n]
+                                    val d = distToSegment(wx, wy, a.x, a.y, b.x, b.y)
+                                    if (d < bestWD) { bestWD = d; bestW = i }
+                                }
+                                if (bestW != null) {
+                                    selWall = bestW; selVertex = null; selObstacle = null; roomTab = 1
+                                    return@detectTapGestures
+                                }
+                                val obs = obstacles.firstOrNull {
+                                    pointInPolygon(wx, wy, obstacleCorners(it))
+                                }
+                                if (obs != null) {
+                                    selObstacle = obs.id; selVertex = null; selWall = null; roomTab = 2
+                                } else {
+                                    selVertex = null; selWall = null; selObstacle = null
+                                }
+                            } else {
+                                if (originMode == OriginMode.POINT) {
+                                    pointX = snapVal(wx); pointY = snapVal(wy)
+                                }
                             }
                         }
                     }
             ) {
-                val canvasW = size.width
-                val canvasH = size.height
-                val center = Offset(canvasW / 2f, canvasH / 2f)
-
-                // Coordinate conversion: 1 meter = pxPerMeter pixels
-                val basePxPerMeter = 125f * scale
-
-                fun metersToCanvas(x: Float, y: Float): Offset {
-                    val px = center.x + panOffset.x + (x - 2.0f) * basePxPerMeter
-                    val py = center.y + panOffset.y + (y - 2.0f) * basePxPerMeter
-                    return Offset(px, py)
-                }
-
-                // 1. Draw CAD Architectural Grid Background (10cm minor, 1m major)
-                drawCadGrid(
-                    canvasW = canvasW,
-                    canvasH = canvasH,
-                    center = center,
-                    panOffset = panOffset,
-                    basePxPerMeter = basePxPerMeter
-                )
+                drawCadGrid(transform, minorMm = 100.0, majorMm = 1000.0)
 
                 if (vertices.size >= 3) {
-                    // Create room boundary path
-                    val roomPath = Path().apply {
-                        val first = metersToCanvas(vertices[0].x, vertices[0].y)
-                        moveTo(first.x, first.y)
-                        for (i in 1 until vertices.size) {
-                            val pt = metersToCanvas(vertices[i].x, vertices[i].y)
-                            lineTo(pt.x, pt.y)
-                        }
-                        close()
+                    val rp = roomPath(vertices, transform)
+                    drawPath(rp, CadColors.Floor)
+                    if (showTiles) {
+                        clipPath(rp) { drawTiles(layout, spec, transform, highlightCuts) }
                     }
-
-                    // 2. Draw Tiling Grid inside Room Path (using clipPath)
-                    clipPath(roomPath) {
-                        // Background fill for floor
-                        drawPath(
-                            path = roomPath,
-                            color = Color(0xFF2C313C)
-                        )
-
-                        // If in tile layout mode or previewing tiles
-                        drawTileGridEngine(
-                            vertices = vertices,
-                            obstacles = obstacles,
-                            tileWidthCm = tileWidthCm,
-                            tileHeightCm = tileHeightCm,
-                            groutWidthMm = groutWidthMm,
-                            pattern = tilePattern,
-                            originX = gridOriginX,
-                            originY = gridOriginY,
-                            rotationDeg = gridRotationDeg,
-                            pxPerMeter = basePxPerMeter,
-                            metersToCanvas = ::metersToCanvas
-                        )
-
-                        // Draw obstacles cutouts inside room
-                        obstacles.forEach { obs ->
-                            val tl = metersToCanvas(obs.x, obs.y)
-                            val br = metersToCanvas(obs.x + obs.width, obs.y + obs.height)
-                            val rect = Rect(tl.x, tl.y, br.x, br.y)
-
-                            drawRect(
-                                color = Color(0xFF14171D),
-                                topLeft = Offset(rect.left, rect.top),
-                                size = Size(rect.width, rect.height)
-                            )
-                            drawRect(
-                                color = Color(0xFFFFB4A2),
-                                topLeft = Offset(rect.left, rect.top),
-                                size = Size(rect.width, rect.height),
-                                style = Stroke(width = 2.dp.toPx())
-                            )
-                        }
-                    }
-
-                    // 3. Draw Room Perimeter Wall Lines and Dimension Markers
-                    drawRoomWallsAndDimensions(
-                        vertices = vertices,
-                        selectedVertexIndex = selectedVertexIndex,
-                        metersToCanvas = ::metersToCanvas,
-                        pxPerMeter = basePxPerMeter,
-                        isPerimeterMode = cadMode == CadMode.ROOM_PERIMETER
-                    )
-
-                    // 4. Draw Tile Origin Anchor indicator when in layout mode
-                    if (cadMode == CadMode.TILE_LAYOUT) {
-                        val originPt = metersToCanvas(gridOriginX, gridOriginY)
-                        drawCircle(
-                            color = Color(0xFFFF5722),
-                            radius = 9.dp.toPx(),
-                            center = originPt
-                        )
-                        drawCircle(
-                            color = Color.White,
-                            radius = 4.dp.toPx(),
-                            center = originPt
-                        )
-                        drawLine(
-                            color = Color(0xFFFF5722),
-                            start = Offset(originPt.x - 14.dp.toPx(), originPt.y),
-                            end = Offset(originPt.x + 14.dp.toPx(), originPt.y),
-                            strokeWidth = 2.dp.toPx()
-                        )
-                        drawLine(
-                            color = Color(0xFFFF5722),
-                            start = Offset(originPt.x, originPt.y - 14.dp.toPx()),
-                            end = Offset(originPt.x, originPt.y + 14.dp.toPx()),
-                            strokeWidth = 2.dp.toPx()
-                        )
-                    }
+                    clipPath(rp) { drawObstacles(obstacles, selObstacle, transform) }
                 }
+
+                drawWalls(
+                    vertices = vertices,
+                    walls = walls,
+                    selectedWall = selWall,
+                    selectedVertex = selVertex,
+                    t = transform,
+                    tm = textMeasurer,
+                    showLabels = showLabels,
+                    showAngles = showAngles && mode == CadMode.ROOM,
+                    editMode = mode == CadMode.ROOM
+                )
+
+                if (mode == CadMode.TILE) {
+                    drawOriginMarker(originPoint.x, originPoint.y, spec.effectiveRotation, transform)
+                }
+
+                drawScaleBar(transform, textMeasurer)
             }
 
-            // Floating CAD Zoom / Reset Overlay
+            // Панель навигации поверх канвы
             Column(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                FloatingActionButton(
-                    onClick = {
-                        scale = 1.0f
-                        panOffset = Offset.Zero
-                    },
-                    modifier = Modifier.size(42.dp),
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                    contentColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Icon(Icons.Default.CropFree, contentDescription = "Сброс вида", modifier = Modifier.size(20.dp))
-                }
-
-                FloatingActionButton(
-                    onClick = { scale = (scale * 1.25f).coerceAtMost(4.0f) },
-                    modifier = Modifier.size(42.dp),
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                    contentColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Приблизить", modifier = Modifier.size(20.dp))
-                }
-
-                FloatingActionButton(
-                    onClick = { scale = (scale / 1.25f).coerceAtLeast(0.5f) },
-                    modifier = Modifier.size(42.dp),
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                    contentColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Icon(Icons.Default.Remove, contentDescription = "Отдалить", modifier = Modifier.size(20.dp))
-                }
-            }
-
-            // Floating Hint Chip
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(16.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = Color.Black.copy(alpha = 0.65f)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                SmallFloatingActionButton(
+                    onClick = { dragMode = if (dragMode == DragMode.PAN) DragMode.EDIT else DragMode.PAN },
+                    containerColor = if (dragMode == DragMode.EDIT)
+                        MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
                 ) {
                     Icon(
-                        imageVector = if (cadMode == CadMode.ROOM_PERIMETER) Icons.Default.TouchApp else Icons.Default.OpenWith,
-                        contentDescription = null,
-                        tint = Color(0xFFFFDCD2),
-                        modifier = Modifier.size(16.dp)
+                        if (dragMode == DragMode.EDIT) Icons.Default.OpenWith else Icons.Default.PanTool,
+                        contentDescription = if (dragMode == DragMode.EDIT) "Режим правки" else "Режим навигации",
+                        modifier = Modifier.size(18.dp)
                     )
-                    Text(
-                        text = if (cadMode == CadMode.ROOM_PERIMETER)
-                            "Тап по углу для перетаскивания"
-                        else
-                            "Тяните пальцем для сдвига швов",
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
+                }
+                SmallFloatingActionButton(
+                    onClick = { pxPerMm = (pxPerMm * 1.3f).coerceAtMost(8f) },
+                    containerColor = MaterialTheme.colorScheme.surface
+                ) { Icon(Icons.Default.Add, "Приблизить", modifier = Modifier.size(18.dp)) }
+                SmallFloatingActionButton(
+                    onClick = { pxPerMm = (pxPerMm / 1.3f).coerceAtLeast(0.004f) },
+                    containerColor = MaterialTheme.colorScheme.surface
+                ) { Icon(Icons.Default.Remove, "Отдалить", modifier = Modifier.size(18.dp)) }
+                SmallFloatingActionButton(
+                    onClick = { panelExpanded = !panelExpanded },
+                    containerColor = MaterialTheme.colorScheme.surface
+                ) {
+                    Icon(
+                        if (panelExpanded) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+                        "Свернуть панель",
+                        modifier = Modifier.size(18.dp)
                     )
+                }
+            }
+
+            Surface(
+                modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = Color.Black.copy(alpha = 0.6f)
+            ) {
+                Text(
+                    text = when {
+                        dragMode == DragMode.PAN -> "Навигация: тяните карту, щипок — масштаб"
+                        mode == CadMode.ROOM -> "Правка: тапните угол/стену, тяните для сдвига"
+                        else -> "Правка: тяните — двигать старт раскладки"
+                    },
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                )
+            }
+        }
+
+        // ------------------------------------------------------------------ Панель управления
+        if (panelExpanded) {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 3.dp,
+                modifier = Modifier.fillMaxWidth().heightIn(max = 330.dp)
+            ) {
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp)) {
+                    if (mode == CadMode.ROOM) {
+                        RoomTabs(roomTab) { roomTab = it }
+                        Spacer(Modifier.height(8.dp))
+                        when (roomTab) {
+                            0 -> VertexPanel(
+                                vertices = vertices,
+                                selected = selVertex,
+                                linStep = linStep,
+                                onStepChange = { linStep = it },
+                                snap = snapToStep,
+                                onSnapChange = { snapToStep = it },
+                                onSelect = { selVertex = it },
+                                onBefore = { snapshot() },
+                                onVerticesChange = { vertices = it },
+                                walls = walls
+                            )
+                            1 -> WallPanel(
+                                vertices = vertices,
+                                walls = walls,
+                                selected = selWall,
+                                linStep = linStep,
+                                angStep = angStep,
+                                onLinStep = { linStep = it },
+                                onAngStep = { angStep = it },
+                                onSelect = { selWall = it },
+                                onBefore = { snapshot() },
+                                onVerticesChange = { vertices = it },
+                                onWallsChange = { walls = it }
+                            )
+                            2 -> ObstaclePanel(
+                                obstacles = obstacles,
+                                selectedId = selObstacle,
+                                linStep = linStep,
+                                angStep = angStep,
+                                onSelect = { selObstacle = it },
+                                onBefore = { snapshot() },
+                                onChange = { obstacles = it },
+                                defaultPos = { val b = boundsOf(vertices); P2(b.left + 200, b.top + 200) }
+                            )
+                            else -> ShapePanel(
+                                onBefore = { snapshot() },
+                                onRect = { showRectDialog = true },
+                                onOrtho = { vertices = orthogonalize(vertices) },
+                                onClearLocks = { walls = walls.mapValues { it.value.copy(lengthLocked = false) } },
+                                showLabels = showLabels,
+                                onShowLabels = { showLabels = it },
+                                showAngles = showAngles,
+                                onShowAngles = { showAngles = it }
+                            )
+                        }
+                    } else {
+                        TileTabs(tileTab) { tileTab = it }
+                        Spacer(Modifier.height(8.dp))
+                        when (tileTab) {
+                            0 -> TileParamPanel(
+                                tileW = tileW, onTileW = { tileW = it },
+                                tileH = tileH, onTileH = { tileH = it },
+                                grout = grout, onGrout = { grout = it },
+                                pattern = pattern, onPattern = { pattern = it },
+                                offsetPercent = offsetPercent, onOffsetPercent = { offsetPercent = it },
+                                rotation = tileRotation, onRotation = { tileRotation = it },
+                                linStep = linStep, onLinStep = { linStep = it },
+                                angStep = angStep, onAngStep = { angStep = it }
+                            )
+                            1 -> OriginPanel(
+                                vertices = vertices,
+                                originMode = originMode, onOriginMode = { originMode = it },
+                                corner = originCorner, onCorner = { originCorner = it },
+                                offX = originOffX, onOffX = { originOffX = it },
+                                offY = originOffY, onOffY = { originOffY = it },
+                                pointX = pointX, onPointX = { pointX = it },
+                                pointY = pointY, onPointY = { pointY = it },
+                                linStep = linStep, onLinStep = { linStep = it },
+                                resolved = originPoint
+                            )
+                            else -> AnalysisPanel(
+                                layout = layout,
+                                spec = spec,
+                                areaMm2 = areaMm2,
+                                showTiles = showTiles, onShowTiles = { showTiles = it },
+                                highlightCuts = highlightCuts, onHighlightCuts = { highlightCuts = it },
+                                onSendToCalculator = {
+                                    viewModel.setCadHandoff(
+                                        areaM2 = areaMm2 / 1_000_000.0,
+                                        perimeterM = perimMm / 1000.0,
+                                        tileWidthMm = tileW,
+                                        tileHeightMm = tileH,
+                                        groutMm = grout
+                                    )
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }
     }
 
-    // Detailed Stats & Cut Tile Breakdown Dialog
-    if (showStatsDialog) {
-        AlertDialog(
-            onDismissRequest = { showStatsDialog = false },
-            title = {
-                Text("Спецификация раскладки", fontWeight = FontWeight.Bold)
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("• Площадь помещения: ${"%.2f".format(roomAreaSqM)} м²")
-                    Text("• Периметр стен: ${"%.2f".format(roomPerimeterM)} п.м.")
-                    Text("• Размер плитки: ${tileWidthCm.toInt()} x ${tileHeightCm.toInt()} см")
-                    Text("• Ширина шва: $groutWidthMm мм")
-                    Text("• Примерное кол-во плитки (+12% подрезка): $approxTileCount шт.")
-                    Text("• Суммарная длина швов: ~$totalGroutLinearMeters п.м.")
-                    Text(
-                        "• Расход затирки: ~${"%.2f".format(totalGroutLinearMeters * groutWidthMm * 0.015f)} кг",
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            },
-            confirmButton = {
-                Button(onClick = { showStatsDialog = false }) {
-                    Text("Понятно")
-                }
+    // ------------------------------------------------------------------ Диалоги
+    if (showStats) {
+        StatsDialog(
+            onDismiss = { showStats = false },
+            vertices = vertices,
+            walls = walls,
+            areaMm2 = areaMm2,
+            perimMm = perimMm,
+            layout = layout,
+            spec = spec
+        )
+    }
+
+    if (showRectDialog) {
+        RectRoomDialog(
+            onDismiss = { showRectDialog = false },
+            onApply = { w, h ->
+                snapshot()
+                vertices = rectangleRoom(w, h)
+                walls = emptyMap()
+                selVertex = null; selWall = null
+                showRectDialog = false
+                fitView()
             }
         )
     }
 }
 
-// -------------------------------------------------------------
-// CONTROL PANELS FOR BOTH MODES
-// -------------------------------------------------------------
+// =====================================================================================
+// ВКЛАДКИ
+// =====================================================================================
 
 @Composable
-fun CadRoomControls(
-    vertices: List<RoomVertex>,
-    onVerticesChange: (List<RoomVertex>) -> Unit,
-    selectedVertexIndex: Int?,
-    onSelectVertex: (Int?) -> Unit,
-    obstacles: List<RoomObstacle>,
-    onObstaclesChange: (List<RoomObstacle>) -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+private fun RoomTabs(selected: Int, onSelect: (Int) -> Unit) {
+    val titles = listOf("Углы", "Стены", "Короба", "Форма")
+    TabRowCompact(titles, selected, onSelect)
+}
+
+@Composable
+private fun TileTabs(selected: Int, onSelect: (Int) -> Unit) {
+    val titles = listOf("Плитка", "Старт", "Анализ")
+    TabRowCompact(titles, selected, onSelect)
+}
+
+@Composable
+private fun TabRowCompact(titles: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
+        titles.forEachIndexed { i, title ->
+            FilterChip(
+                selected = selected == i,
+                onClick = { onSelect(i) },
+                label = { Text(title, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+            )
+        }
+    }
+}
+
+// =====================================================================================
+// ПАНЕЛЬ УГЛОВ
+// =====================================================================================
+
+@Composable
+private fun VertexPanel(
+    vertices: List<CadVertex>,
+    walls: Map<String, WallProps>,
+    selected: Int?,
+    linStep: Double,
+    onStepChange: (Double) -> Unit,
+    snap: Boolean,
+    onSnapChange: (Boolean) -> Unit,
+    onSelect: (Int?) -> Unit,
+    onBefore: () -> Unit,
+    onVerticesChange: (List<CadVertex>) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        StepChooser("Шаг перемещения", LINEAR_STEPS, linStep, onStepChange, "мм", 1)
+
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            vertices.indices.forEach { i ->
+                FilterChip(
+                    selected = selected == i,
+                    onClick = { onSelect(i) },
+                    label = { Text("№${i + 1}", fontSize = 11.sp) }
+                )
+            }
+        }
+
+        val idx = selected
+        if (idx == null || idx !in vertices.indices) {
             Text(
-                text = "Форма помещения",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
+                "Выберите угол на плане или чипом выше. Координаты можно ввести вручную " +
+                    "или добрать стрелками с выбранным шагом.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-
-            // Button to add a new vertex
-            FilledTonalButton(
-                onClick = {
-                    if (vertices.size >= 3) {
-                        val last = vertices.last()
-                        val first = vertices.first()
-                        val newV = RoomVertex(x = (last.x + first.x) / 2f + 0.3f, y = (last.y + first.y) / 2f + 0.3f)
-                        onVerticesChange(vertices + newV)
-                    }
-                },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                modifier = Modifier.height(32.dp)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Добавить угол", fontSize = 12.sp)
-            }
-        }
-
-        // Room Shape Templates Row
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            item {
-                PresetRoomChip("Прямоугольник (3х2м)") {
-                    onVerticesChange(
-                        listOf(
-                            RoomVertex(x = 0.5f, y = 0.5f),
-                            RoomVertex(x = 3.5f, y = 0.5f),
-                            RoomVertex(x = 3.5f, y = 2.5f),
-                            RoomVertex(x = 0.5f, y = 2.5f)
-                        )
-                    )
-                }
-            }
-            item {
-                PresetRoomChip("Г-образная (L)") {
-                    onVerticesChange(
-                        listOf(
-                            RoomVertex(x = 0.5f, y = 0.5f),
-                            RoomVertex(x = 3.5f, y = 0.5f),
-                            RoomVertex(x = 3.5f, y = 2.0f),
-                            RoomVertex(x = 2.0f, y = 2.0f),
-                            RoomVertex(x = 2.0f, y = 3.5f),
-                            RoomVertex(x = 0.5f, y = 3.5f)
-                        )
-                    )
-                }
-            }
-            item {
-                PresetRoomChip("Т-образная") {
-                    onVerticesChange(
-                        listOf(
-                            RoomVertex(x = 0.5f, y = 0.5f),
-                            RoomVertex(x = 3.5f, y = 0.5f),
-                            RoomVertex(x = 3.5f, y = 1.5f),
-                            RoomVertex(x = 2.5f, y = 1.5f),
-                            RoomVertex(x = 2.5f, y = 3.2f),
-                            RoomVertex(x = 1.5f, y = 3.2f),
-                            RoomVertex(x = 1.5f, y = 1.5f),
-                            RoomVertex(x = 0.5f, y = 1.5f)
-                        )
-                    )
-                }
-            }
-            item {
-                PresetRoomChip("+ Короб инсталляции") {
-                    onObstaclesChange(
-                        obstacles + RoomObstacle(
-                            x = 0.5f,
-                            y = 0.5f,
-                            width = 0.8f,
-                            height = 0.4f,
-                            name = "Инсталляция"
-                        )
-                    )
-                }
-            }
-        }
-
-        // Selected Vertex Details / Delete
-        if (selectedVertexIndex != null && selectedVertexIndex in vertices.indices) {
-            val v = vertices[selectedVertexIndex]
+        } else {
+            val v = vertices[idx]
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Угол #${selectedVertexIndex + 1}: X=${"%.2f".format(v.x)}м, Y=${"%.2f".format(v.y)}м",
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Bold
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    NumberStepperField(
+                        label = "X угла №${idx + 1}",
+                        value = v.x,
+                        onValueChange = { onVerticesChange(setVertexPosition(vertices, walls, idx, it, v.y)) },
+                        step = linStep, suffix = "мм", decimals = 1
+                    )
+                    NumberStepperField(
+                        label = "Y угла №${idx + 1}",
+                        value = v.y,
+                        onValueChange = { onVerticesChange(setVertexPosition(vertices, walls, idx, v.x, it)) },
+                        step = linStep, suffix = "мм", decimals = 1
+                    )
+                }
+                DPad(
+                    step = linStep,
+                    unit = "мм",
+                    decimals = 1,
+                    onMove = { dx, dy -> onVerticesChange(nudgeVertex(vertices, walls, idx, dx, dy)) }
                 )
+            }
 
+            InfoRow("Внутренний угол", "${fmtDeg(interiorAngleDeg(vertices, idx))}°")
+
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilterChip(
+                    selected = snap,
+                    onClick = { onSnapChange(!snap) },
+                    label = { Text("Привязка к шагу", fontSize = 11.sp) }
+                )
+                FilterChip(
+                    selected = v.pinned,
+                    onClick = {
+                        onBefore()
+                        onVerticesChange(vertices.toMutableList().also { it[idx] = v.copy(pinned = !v.pinned) })
+                    },
+                    label = { Text(if (v.pinned) "Закреплён" else "Закрепить", fontSize = 11.sp) }
+                )
+                AssistChip(
+                    onClick = {
+                        onBefore()
+                        onVerticesChange(splitWall(vertices, idx))
+                    },
+                    label = { Text("+ угол после", fontSize = 11.sp) }
+                )
                 if (vertices.size > 3) {
-                    IconButton(
+                    AssistChip(
                         onClick = {
-                            val updated = vertices.toMutableList()
-                            updated.removeAt(selectedVertexIndex)
-                            onVerticesChange(updated)
-                            onSelectVertex(null)
+                            onBefore()
+                            onVerticesChange(vertices.toMutableList().also { it.removeAt(idx) })
+                            onSelect(null)
                         },
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = "Удалить угол", tint = MaterialTheme.colorScheme.error)
-                    }
+                        label = { Text("Удалить", fontSize = 11.sp) },
+                        colors = AssistChipDefaults.assistChipColors(labelColor = MaterialTheme.colorScheme.error)
+                    )
                 }
             }
         }
     }
 }
 
-@Composable
-fun CadTileControls(
-    tileWidthCm: Float,
-    onTileWidthChange: (Float) -> Unit,
-    tileHeightCm: Float,
-    onTileHeightChange: (Float) -> Unit,
-    groutWidthMm: Float,
-    onGroutWidthChange: (Float) -> Unit,
-    tilePattern: TilePatternType,
-    onTilePatternChange: (TilePatternType) -> Unit,
-    gridRotationDeg: Float,
-    onGridRotationChange: (Float) -> Unit,
-    onAlignToCenter: () -> Unit,
-    onAlignToOrigin: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        // Tile Dimensions and Presets
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Формат: ${tileWidthCm.toInt()}x${tileHeightCm.toInt()} см, шов $groutWidthMm мм",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Bold
-            )
+// =====================================================================================
+// ПАНЕЛЬ СТЕН
+// =====================================================================================
 
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                AssistChip(
-                    onClick = {
-                        onTileWidthChange(60f)
-                        onTileHeightChange(60f)
-                    },
-                    label = { Text("60x60") }
-                )
-                AssistChip(
-                    onClick = {
-                        onTileWidthChange(60f)
-                        onTileHeightChange(120f)
-                    },
-                    label = { Text("60x120") }
-                )
-                AssistChip(
-                    onClick = {
-                        onTileWidthChange(30f)
-                        onTileHeightChange(60f)
-                    },
-                    label = { Text("30x60") }
+@Composable
+private fun WallPanel(
+    vertices: List<CadVertex>,
+    walls: Map<String, WallProps>,
+    selected: Int?,
+    linStep: Double,
+    angStep: Double,
+    onLinStep: (Double) -> Unit,
+    onAngStep: (Double) -> Unit,
+    onSelect: (Int?) -> Unit,
+    onBefore: () -> Unit,
+    onVerticesChange: (List<CadVertex>) -> Unit,
+    onWallsChange: (Map<String, WallProps>) -> Unit
+) {
+    var anchor by remember { mutableStateOf(WallAnchor.START) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            vertices.indices.forEach { i ->
+                val locked = walls[vertices[i].id]?.lengthLocked == true
+                FilterChip(
+                    selected = selected == i,
+                    onClick = { onSelect(i) },
+                    label = { Text(if (locked) "С${i + 1} 🔒" else "С${i + 1}", fontSize = 11.sp) }
                 )
             }
         }
 
-        // Pattern selection
-        ScrollableTabRow(
-            selectedTabIndex = tilePattern.ordinal,
-            edgePadding = 0.dp,
-            containerColor = Color.Transparent,
-            divider = {},
-            indicator = {}
+        val idx = selected
+        if (idx == null || idx !in vertices.indices || vertices.size < 2) {
+            Text(
+                "Выберите стену на плане. Можно задать точную длину, азимут, " +
+                    "зафиксировать длину замком — тогда при движении соседних углов она не изменится.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            return@Column
+        }
+
+        val a = vertices[idx]
+        val b = vertices[(idx + 1) % vertices.size]
+        val len = distMm(a, b)
+        val az = azimuthDeg(a, b)
+        val props = walls[a.id] ?: WallProps()
+
+        Text(
+            "Стена №${idx + 1}: угол ${idx + 1} → угол ${(idx + 1) % vertices.size + 1}",
+            fontSize = 12.sp, fontWeight = FontWeight.Bold
+        )
+
+        StepChooser("Шаг длины", LINEAR_STEPS, linStep, onLinStep, "мм", 1)
+
+        NumberStepperField(
+            label = "Длина стены",
+            value = len,
+            onValueChange = { newLen ->
+                onVerticesChange(setWallLength(vertices, walls, idx, newLen, anchor))
+                if (props.lengthLocked) {
+                    onWallsChange(walls + (a.id to props.copy(lockedLengthMm = newLen)))
+                }
+            },
+            step = linStep, suffix = "мм", decimals = 1, min = 1.0, max = 100_000.0
+        )
+
+        Text("Что двигать при изменении длины:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            SegmentedButton(
+                shape = SegmentedButtonDefaults.itemShape(0, 3),
+                onClick = { anchor = WallAnchor.START },
+                selected = anchor == WallAnchor.START
+            ) { Text("конец", fontSize = 11.sp) }
+            SegmentedButton(
+                shape = SegmentedButtonDefaults.itemShape(1, 3),
+                onClick = { anchor = WallAnchor.END },
+                selected = anchor == WallAnchor.END
+            ) { Text("начало", fontSize = 11.sp) }
+            SegmentedButton(
+                shape = SegmentedButtonDefaults.itemShape(2, 3),
+                onClick = { anchor = WallAnchor.CENTER },
+                selected = anchor == WallAnchor.CENTER
+            ) { Text("оба", fontSize = 11.sp) }
+        }
+
+        StepChooser("Шаг угла", ANGLE_STEPS, angStep, onAngStep, "°", 1)
+
+        NumberStepperField(
+            label = "Азимут стены (0°→вправо, 90°→вверх)",
+            value = az,
+            onValueChange = {
+                onVerticesChange(
+                    setWallAzimuth(
+                        vertices, walls, idx, normDeg(it),
+                        if (anchor == WallAnchor.END) WallAnchor.END else WallAnchor.START
+                    )
+                )
+            },
+            step = angStep, suffix = "°", decimals = 1, min = -720.0, max = 1080.0
+        )
+
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            TilePatternType.values().forEach { pat ->
-                val isSelected = tilePattern == pat
-                Tab(
-                    selected = isSelected,
-                    onClick = { onTilePatternChange(pat) },
-                    modifier = Modifier
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(
-                            if (isSelected) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.surfaceVariant
-                        ),
-                    text = {
-                        Text(
-                            text = when (pat) {
-                                TilePatternType.STRAIGHT -> "Прямая"
-                                TilePatternType.OFFSET_HALF -> "Разбежка 50%"
-                                TilePatternType.OFFSET_THIRD -> "Разбежка 33%"
-                                TilePatternType.HERRINGBONE -> "Елочка"
-                                TilePatternType.DIAGONAL_45 -> "Диагональ"
-                            },
-                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+            FilterChip(
+                selected = props.lengthLocked,
+                onClick = {
+                    onBefore()
+                    onWallsChange(
+                        walls + (a.id to props.copy(
+                            lengthLocked = !props.lengthLocked,
+                            lockedLengthMm = len
+                        ))
+                    )
+                },
+                label = { Text(if (props.lengthLocked) "Длина закреплена 🔒" else "Закрепить длину", fontSize = 11.sp) }
+            )
+            FilterChip(
+                selected = props.excluded,
+                onClick = {
+                    onBefore()
+                    onWallsChange(walls + (a.id to props.copy(excluded = !props.excluded)))
+                },
+                label = { Text("Проём (не считать)", fontSize = 11.sp) }
+            )
+            AssistChip(
+                onClick = { onBefore(); onVerticesChange(splitWall(vertices, idx)) },
+                label = { Text("Разделить", fontSize = 11.sp) }
+            )
+            AssistChip(
+                onClick = {
+                    onBefore()
+                    val snapped = Math.round(az / 90.0) * 90.0
+                    onVerticesChange(setWallAzimuth(vertices, walls, idx, snapped, WallAnchor.START))
+                },
+                label = { Text("Выровнять 90°", fontSize = 11.sp) }
+            )
+        }
+
+        // Полярный ввод новой стены
+        PolarAppend(
+            onAppend = { l, angle ->
+                onBefore()
+                onVerticesChange(appendPolarVertex(vertices, idx, l, angle))
+            },
+            defaultAzimuth = az
+        )
+    }
+}
+
+@Composable
+private fun PolarAppend(onAppend: (Double, Double) -> Unit, defaultAzimuth: Double) {
+    var l by remember { mutableStateOf(1000.0) }
+    var ang by remember { mutableStateOf(defaultAzimuth) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        HorizontalDivider()
+        Text(
+            "Добавить угол полярно (от начала выбранной стены)",
+            fontSize = 11.sp, fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            NumberStepperField("Длина", l, { l = it }, 10.0, Modifier.weight(1f), "мм", 0, 1.0, 100_000.0)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            NumberStepperField("Азимут", ang, { ang = it }, 1.0, Modifier.weight(1f), "°", 1, -720.0, 1080.0)
+        }
+        Button(onClick = { onAppend(l, ang) }, modifier = Modifier.fillMaxWidth()) {
+            Text("Отложить отрезок", fontSize = 12.sp)
+        }
+    }
+}
+
+// =====================================================================================
+// ПАНЕЛЬ КОРОБОВ
+// =====================================================================================
+
+@Composable
+private fun ObstaclePanel(
+    obstacles: List<CadObstacle>,
+    selectedId: String?,
+    linStep: Double,
+    angStep: Double,
+    onSelect: (String?) -> Unit,
+    onBefore: () -> Unit,
+    onChange: (List<CadObstacle>) -> Unit,
+    defaultPos: () -> P2
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            obstacles.forEachIndexed { i, o ->
+                FilterChip(
+                    selected = selectedId == o.id,
+                    onClick = { onSelect(o.id) },
+                    label = { Text("${o.name} ${i + 1}", fontSize = 11.sp) }
+                )
+            }
+            AssistChip(
+                onClick = {
+                    onBefore()
+                    val p = defaultPos()
+                    val n = CadObstacle(x = p.x, y = p.y, w = 600.0, h = 400.0)
+                    onChange(obstacles + n)
+                    onSelect(n.id)
+                },
+                label = { Text("+ короб", fontSize = 11.sp) }
+            )
+        }
+
+        val o = obstacles.firstOrNull { it.id == selectedId }
+        if (o == null) {
+            Text(
+                "Короба, колонны, инсталляции и ниши вычитаются из площади и учитываются в подрезке.",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            return@Column
+        }
+
+        fun upd(f: (CadObstacle) -> CadObstacle) = onChange(obstacles.map { if (it.id == o.id) f(it) else it })
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                NumberStepperField("X", o.x, { v -> upd { it.copy(x = v) } }, linStep, suffix = "мм", decimals = 1)
+                NumberStepperField("Y", o.y, { v -> upd { it.copy(y = v) } }, linStep, suffix = "мм", decimals = 1)
+            }
+            DPad(linStep, "мм", { dx, dy -> upd { it.copy(x = it.x + dx, y = it.y + dy) } }, decimals = 1)
+        }
+        NumberStepperField("Ширина", o.w, { v -> upd { it.copy(w = v) } }, linStep, suffix = "мм", decimals = 1, min = 1.0)
+        NumberStepperField("Глубина", o.h, { v -> upd { it.copy(h = v) } }, linStep, suffix = "мм", decimals = 1, min = 1.0)
+        NumberStepperField("Поворот", o.rotationDeg, { v -> upd { it.copy(rotationDeg = v) } }, angStep, suffix = "°", decimals = 1, min = -360.0, max = 360.0)
+
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilterChip(
+                selected = o.subtract,
+                onClick = { upd { it.copy(subtract = !it.subtract) } },
+                label = { Text("Вычитать из площади", fontSize = 11.sp) }
+            )
+            AssistChip(
+                onClick = { onBefore(); onChange(obstacles.filter { it.id != o.id }); onSelect(null) },
+                label = { Text("Удалить", fontSize = 11.sp) },
+                colors = AssistChipDefaults.assistChipColors(labelColor = MaterialTheme.colorScheme.error)
+            )
+        }
+    }
+}
+
+// =====================================================================================
+// ПАНЕЛЬ ФОРМЫ
+// =====================================================================================
+
+@Composable
+private fun ShapePanel(
+    onBefore: () -> Unit,
+    onRect: () -> Unit,
+    onOrtho: () -> Unit,
+    onClearLocks: () -> Unit,
+    showLabels: Boolean,
+    onShowLabels: (Boolean) -> Unit,
+    showAngles: Boolean,
+    onShowAngles: (Boolean) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = onRect, modifier = Modifier.fillMaxWidth()) {
+            Text("Задать прямоугольник по размерам", fontSize = 12.sp)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = { onBefore(); onOrtho() }, modifier = Modifier.weight(1f)) {
+                Text("Выпрямить по 90°", fontSize = 11.sp)
+            }
+            OutlinedButton(onClick = { onBefore(); onClearLocks() }, modifier = Modifier.weight(1f)) {
+                Text("Снять все замки", fontSize = 11.sp)
+            }
+        }
+        HorizontalDivider()
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            FilterChip(showLabels, { onShowLabels(!showLabels) }, { Text("Размеры", fontSize = 11.sp) })
+            FilterChip(showAngles, { onShowAngles(!showAngles) }, { Text("Углы", fontSize = 11.sp) })
+        }
+        Text(
+            "Замок на стене (вкладка «Стены») сохраняет её длину: при перемещении соседних углов " +
+                "решатель связей возвращает стене заданный размер. Закреплённый угол (вкладка «Углы») " +
+                "остаётся на месте.",
+            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+// =====================================================================================
+// ПАНЕЛЬ ПАРАМЕТРОВ ПЛИТКИ
+// =====================================================================================
+
+@Composable
+private fun TileParamPanel(
+    tileW: Double, onTileW: (Double) -> Unit,
+    tileH: Double, onTileH: (Double) -> Unit,
+    grout: Double, onGrout: (Double) -> Unit,
+    pattern: TilePattern, onPattern: (TilePattern) -> Unit,
+    offsetPercent: Double, onOffsetPercent: (Double) -> Unit,
+    rotation: Double, onRotation: (Double) -> Unit,
+    linStep: Double, onLinStep: (Double) -> Unit,
+    angStep: Double, onAngStep: (Double) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf(
+                200.0 to 200.0, 300.0 to 300.0, 300.0 to 600.0, 600.0 to 600.0,
+                600.0 to 1200.0, 800.0 to 800.0, 1200.0 to 2780.0, 100.0 to 300.0
+            ).forEach { (w, h) ->
+                AssistChip(
+                    onClick = { onTileW(w); onTileH(h) },
+                    label = { Text("${w.toInt()}×${h.toInt()}", fontSize = 11.sp) }
+                )
+            }
+        }
+
+        NumberStepperField("Ширина плитки", tileW, onTileW, linStep, suffix = "мм", decimals = 1, min = 5.0, max = 4000.0)
+        NumberStepperField("Длина плитки", tileH, onTileH, linStep, suffix = "мм", decimals = 1, min = 5.0, max = 4000.0)
+        NumberStepperField("Ширина шва", grout, onGrout, 0.5, suffix = "мм", decimals = 1, min = 0.0, max = 30.0)
+
+        HorizontalDivider()
+
+        Text("Схема раскладки", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            TilePattern.entries.forEach { p ->
+                FilterChip(
+                    selected = pattern == p,
+                    onClick = { onPattern(p) },
+                    label = { Text(tilePatternTitle(p), fontSize = 11.sp) }
+                )
+            }
+        }
+
+        if (pattern == TilePattern.OFFSET) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(50.0, 33.3, 25.0, 20.0).forEach { p ->
+                    AssistChip(onClick = { onOffsetPercent(p) }, label = { Text("${fmtNum(p, 1)} %", fontSize = 11.sp) })
+                }
+            }
+            NumberStepperField(
+                "Смещение ряда", offsetPercent, onOffsetPercent, 1.0,
+                suffix = "%", decimals = 1, min = 0.0, max = 90.0
+            )
+        }
+
+        if (pattern == TilePattern.HERRINGBONE) {
+            Text(
+                "Ёлочка строится из пары «длинная + короткая» плитка. Классика — формат 2:1 " +
+                    "(600×300, 1200×600), но раскладка корректно собирается и для других пропорций.",
+                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        HorizontalDivider()
+
+        StepChooser("Шаг угла поворота", ANGLE_STEPS, angStep, onAngStep, "°", 1)
+        NumberStepperField(
+            "Угол раскладки", rotation, onRotation, angStep,
+            suffix = "°", decimals = 1, min = -360.0, max = 360.0
+        )
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf(0.0, 15.0, 22.5, 30.0, 45.0, 60.0, 90.0).forEach { a ->
+                AssistChip(onClick = { onRotation(a) }, label = { Text("${fmtNum(a, 1)}°", fontSize = 11.sp) })
+            }
+        }
+        StepChooser("Шаг размеров", LINEAR_STEPS, linStep, onLinStep, "мм", 1)
+    }
+}
+
+// =====================================================================================
+// ПАНЕЛЬ ТОЧКИ СТАРТА
+// =====================================================================================
+
+@Composable
+private fun OriginPanel(
+    vertices: List<CadVertex>,
+    originMode: OriginMode, onOriginMode: (OriginMode) -> Unit,
+    corner: Int, onCorner: (Int) -> Unit,
+    offX: Double, onOffX: (Double) -> Unit,
+    offY: Double, onOffY: (Double) -> Unit,
+    pointX: Double, onPointX: (Double) -> Unit,
+    pointY: Double, onPointY: (Double) -> Unit,
+    linStep: Double, onLinStep: (Double) -> Unit,
+    resolved: P2
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            SegmentedButton(
+                shape = SegmentedButtonDefaults.itemShape(0, 3),
+                onClick = { onOriginMode(OriginMode.CORNER) },
+                selected = originMode == OriginMode.CORNER
+            ) { Text("От угла", fontSize = 11.sp) }
+            SegmentedButton(
+                shape = SegmentedButtonDefaults.itemShape(1, 3),
+                onClick = { onOriginMode(OriginMode.POINT) },
+                selected = originMode == OriginMode.POINT
+            ) { Text("От точки", fontSize = 11.sp) }
+            SegmentedButton(
+                shape = SegmentedButtonDefaults.itemShape(2, 3),
+                onClick = { onOriginMode(OriginMode.CENTER) },
+                selected = originMode == OriginMode.CENTER
+            ) { Text("От центра", fontSize = 11.sp) }
+        }
+
+        StepChooser("Шаг перемещения точки", LINEAR_STEPS, linStep, onLinStep, "мм", 1)
+
+        when (originMode) {
+            OriginMode.CORNER -> {
+                Text("Какой угол — начало раскладки:", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    vertices.indices.forEach { i ->
+                        FilterChip(
+                            selected = corner == i,
+                            onClick = { onCorner(i) },
+                            label = { Text("№${i + 1}", fontSize = 11.sp) }
                         )
                     }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        NumberStepperField("Отступ по X", offX, onOffX, linStep, suffix = "мм", decimals = 1)
+                        NumberStepperField("Отступ по Y", offY, onOffY, linStep, suffix = "мм", decimals = 1)
+                    }
+                    DPad(linStep, "мм", { dx, dy -> onOffX(offX + dx); onOffY(offY + dy) }, decimals = 1)
+                }
+            }
+            OriginMode.CENTER -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        NumberStepperField("Смещение X", offX, onOffX, linStep, suffix = "мм", decimals = 1)
+                        NumberStepperField("Смещение Y", offY, onOffY, linStep, suffix = "мм", decimals = 1)
+                    }
+                    DPad(linStep, "мм", { dx, dy -> onOffX(offX + dx); onOffY(offY + dy) }, decimals = 1)
+                }
+            }
+            OriginMode.POINT -> {
+                Text(
+                    "Тапните по плану, чтобы поставить точку, затем доводите стрелками с выбранным шагом.",
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            }
-        }
-
-        // Quick Alignment buttons and Rotation slider
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedButton(
-                    onClick = onAlignToCenter,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Icon(Icons.Default.CropFree, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("В центр", fontSize = 11.sp)
-                }
-
-                OutlinedButton(
-                    onClick = onAlignToOrigin,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Icon(Icons.Default.Place, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("От угла", fontSize = 11.sp)
-                }
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Угол: ${gridRotationDeg.toInt()}°", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                IconButton(
-                    onClick = { onGridRotationChange((gridRotationDeg + 45f) % 360f) },
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(Icons.Default.RotateRight, contentDescription = "Поворот +45°", modifier = Modifier.size(18.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        NumberStepperField("X точки", pointX, onPointX, linStep, suffix = "мм", decimals = 1)
+                        NumberStepperField("Y точки", pointY, onPointY, linStep, suffix = "мм", decimals = 1)
+                    }
+                    DPad(linStep, "мм", { dx, dy -> onPointX(pointX + dx); onPointY(pointY + dy) }, decimals = 1)
                 }
             }
         }
+
+        InfoRow("Итоговая точка старта", "X ${fmtMm(resolved.x)} / Y ${fmtMm(resolved.y)} мм", highlight = true)
     }
 }
 
+// =====================================================================================
+// ПАНЕЛЬ АНАЛИЗА
+// =====================================================================================
+
 @Composable
-fun PresetRoomChip(name: String, onClick: () -> Unit) {
-    SuggestionChip(
-        onClick = onClick,
-        label = { Text(name, fontSize = 12.sp, fontWeight = FontWeight.Medium) },
-        shape = RoundedCornerShape(12.dp)
+private fun AnalysisPanel(
+    layout: TileLayout,
+    spec: TileSpec,
+    areaMm2: Double,
+    showTiles: Boolean, onShowTiles: (Boolean) -> Unit,
+    highlightCuts: Boolean, onHighlightCuts: (Boolean) -> Unit,
+    onSendToCalculator: () -> Unit
+) {
+    var sent by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            FilterChip(showTiles, { onShowTiles(!showTiles) }, { Text("Показывать плитку", fontSize = 11.sp) })
+            FilterChip(highlightCuts, { onHighlightCuts(!highlightCuts) }, { Text("Подсветить подрезку", fontSize = 11.sp) })
+        }
+        InfoRow("Площадь пола", "${fmtArea(areaMm2)} м²")
+        InfoRow("Плитка целиком", "${layout.stats.wholeCount} шт")
+        InfoRow("Плитка в подрезку", "${layout.stats.cutCount} шт")
+        InfoRow("Всего задействовано", "${layout.stats.totalCount} шт", highlight = true)
+        val tileArea = spec.widthMm * spec.heightMm / 1_000_000.0
+        InfoRow("Площадь по плиткам", "${fmtNum(layout.stats.totalCount * tileArea, 2)} м²")
+        if (layout.stats.edgeCutsMm.isNotEmpty()) {
+            InfoRow(
+                "Подрезка у стен (мин)",
+                "${fmtMm(layout.stats.minEdgeCutMm)} мм",
+                highlight = layout.stats.minEdgeCutMm < min(spec.widthMm, spec.heightMm) / 3.0
+            )
+            if (layout.stats.minEdgeCutMm < min(spec.widthMm, spec.heightMm) / 3.0) {
+                Text(
+                    "Узкая подрезка (< 1/3 плитки) — сдвиньте старт раскладки, чтобы подрезка " +
+                        "у противоположных стен была одинаковой и шире.",
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+        if (layout.stats.truncated) {
+            Text(
+                "Показана часть раскладки: слишком много плиток для отрисовки. " +
+                    "Увеличьте формат плитки для предпросмотра.",
+                fontSize = 11.sp, color = MaterialTheme.colorScheme.error
+            )
+        }
+        Button(
+            onClick = { onSendToCalculator(); sent = true },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text(if (sent) "Отправлено в калькулятор ✓" else "Отправить в калькулятор", fontSize = 12.sp) }
+    }
+}
+
+// =====================================================================================
+// ДИАЛОГИ
+// =====================================================================================
+
+@Composable
+private fun RectRoomDialog(onDismiss: () -> Unit, onApply: (Double, Double) -> Unit) {
+    var w by remember { mutableStateOf(3400.0) }
+    var h by remember { mutableStateOf(2200.0) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Прямоугольное помещение", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                NumberStepperField("Ширина", w, { w = it }, 10.0, suffix = "мм", decimals = 0, min = 100.0, max = 50_000.0)
+                NumberStepperField("Длина", h, { h = it }, 10.0, suffix = "мм", decimals = 0, min = 100.0, max = 50_000.0)
+                Text("Площадь: ${fmtNum(w * h / 1_000_000.0, 2)} м²", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        },
+        confirmButton = { Button(onClick = { onApply(w, h) }) { Text("Построить") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
     )
 }
 
-// -------------------------------------------------------------
-// CANVAS DRAWING ENGINES & MATHEMATICS
-// -------------------------------------------------------------
-
-fun DrawScope.drawCadGrid(
-    canvasW: Float,
-    canvasH: Float,
-    center: Offset,
-    panOffset: Offset,
-    basePxPerMeter: Float
+@Composable
+private fun StatsDialog(
+    onDismiss: () -> Unit,
+    vertices: List<CadVertex>,
+    walls: Map<String, WallProps>,
+    areaMm2: Double,
+    perimMm: Double,
+    layout: TileLayout,
+    spec: TileSpec
 ) {
-    // 10cm grid lines (minor) and 1m grid lines (major)
-    val minorPx = basePxPerMeter * 0.1f // 10cm
-    val majorPx = basePxPerMeter * 1.0f // 1m
-
-    // Start offsets relative to center
-    val originScreenX = center.x + panOffset.x
-    val originScreenY = center.y + panOffset.y
-
-    // Minor lines
-    val startX = (originScreenX % minorPx)
-    val startY = (originScreenY % minorPx)
-
-    var curX = startX
-    while (curX < canvasW) {
-        drawLine(
-            color = Color(0xFF282D37),
-            start = Offset(curX, 0f),
-            end = Offset(curX, canvasH),
-            strokeWidth = 1f
-        )
-        curX += minorPx
-    }
-
-    var curY = startY
-    while (curY < canvasH) {
-        drawLine(
-            color = Color(0xFF282D37),
-            start = Offset(0f, curY),
-            end = Offset(canvasW, curY),
-            strokeWidth = 1f
-        )
-        curY += minorPx
-    }
-
-    // Major 1-meter lines
-    val majorStartX = (originScreenX % majorPx)
-    val majorStartY = (originScreenY % majorPx)
-
-    var mX = majorStartX
-    while (mX < canvasW) {
-        drawLine(
-            color = Color(0xFF3B4252),
-            start = Offset(mX, 0f),
-            end = Offset(mX, canvasH),
-            strokeWidth = 1.5f
-        )
-        mX += majorPx
-    }
-
-    var mY = majorStartY
-    while (mY < canvasH) {
-        drawLine(
-            color = Color(0xFF3B4252),
-            start = Offset(0f, mY),
-            end = Offset(canvasW, mY),
-            strokeWidth = 1.5f
-        )
-        mY += majorPx
-    }
-}
-
-fun DrawScope.drawTileGridEngine(
-    vertices: List<RoomVertex>,
-    obstacles: List<RoomObstacle>,
-    tileWidthCm: Float,
-    tileHeightCm: Float,
-    groutWidthMm: Float,
-    pattern: TilePatternType,
-    originX: Float,
-    originY: Float,
-    rotationDeg: Float,
-    pxPerMeter: Float,
-    metersToCanvas: (Float, Float) -> Offset
-) {
-    val bounds = getPolygonBoundingBox(vertices)
-    val tileW_m = tileWidthCm / 100f
-    val tileH_m = tileHeightCm / 100f
-    val grout_m = groutWidthMm / 1000f
-
-    val stepX = tileW_m + grout_m
-    val stepY = tileH_m + grout_m
-
-    // Expand bounding box to guarantee full coverage even after rotation
-    val maxRadius = sqrt((bounds.right - bounds.left).pow(2) + (bounds.bottom - bounds.top).pow(2)) + 1.0f
-    val originCenterCanvas = metersToCanvas(originX, originY)
-
-    val tileFaceColor = Color(0xFFE5DDD5) // Realistic ceramic cream tone
-    val groutLineColor = Color(0xFF5A4A42) // Dark grout line
-
-    withTransform({
-        rotate(rotationDeg, pivot = originCenterCanvas)
-    }) {
-        val numCols = (maxRadius * 2 / stepX).toInt() + 4
-        val numRows = (maxRadius * 2 / stepY).toInt() + 4
-
-        for (row in -numRows / 2..numRows / 2) {
-            for (col in -numCols / 2..numCols / 2) {
-                var localTileX = col * stepX
-                val localTileY = row * stepY
-
-                // Pattern Offset shifts
-                when (pattern) {
-                    TilePatternType.OFFSET_HALF -> {
-                        localTileX += (abs(row) % 2) * 0.5f * stepX
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Спецификация плана", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                InfoRow("Площадь пола", "${fmtArea(areaMm2)} м²", highlight = true)
+                InfoRow("Периметр (без проёмов)", "${fmtNum(perimMm / 1000.0, 3)} м")
+                InfoRow("Углов", "${vertices.size}")
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                Text("Стены", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                val n = vertices.size
+                for (i in 0 until n) {
+                    val a = vertices[i]
+                    val b = vertices[(i + 1) % n]
+                    val p = walls[a.id]
+                    val marks = buildString {
+                        if (p?.lengthLocked == true) append(" 🔒")
+                        if (p?.excluded == true) append(" (проём)")
                     }
-                    TilePatternType.OFFSET_THIRD -> {
-                        localTileX += (abs(row) % 3) * 0.333f * stepX
-                    }
-                    TilePatternType.DIAGONAL_45 -> {
-                        // Handled by rotation or 45 offset
-                    }
-                    TilePatternType.HERRINGBONE -> {
-                        // Staggered pattern
-                        if (row % 2 == 0) {
-                            localTileX += 0.25f * stepX
-                        }
-                    }
-                    TilePatternType.STRAIGHT -> {}
+                    InfoRow("С${i + 1}$marks", "${fmtMm(distMm(a, b))} мм / ${fmtDeg(azimuthDeg(a, b))}°")
                 }
-
-                val worldX = originX + localTileX
-                val worldY = originY + localTileY
-
-                val ptScreen = metersToCanvas(worldX, worldY)
-                val widthPx = tileW_m * pxPerMeter
-                val heightPx = tileH_m * pxPerMeter
-                val groutPx = (grout_m * pxPerMeter).coerceAtLeast(1.5f)
-
-                // 1. Draw Tile Face
-                drawRect(
-                    color = tileFaceColor,
-                    topLeft = ptScreen,
-                    size = Size(widthPx, heightPx)
-                )
-
-                // 2. Draw Grout Line (Stroke)
-                drawRect(
-                    color = groutLineColor,
-                    topLeft = ptScreen,
-                    size = Size(widthPx, heightPx),
-                    style = Stroke(width = groutPx)
-                )
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                Text("Углы помещения", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                vertices.indices.forEach { i ->
+                    InfoRow("Угол ${i + 1}", "${fmtDeg(interiorAngleDeg(vertices, i))}°")
+                }
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                Text("Раскладка", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                InfoRow("Формат", "${fmtMm(spec.widthMm)}×${fmtMm(spec.heightMm)} мм")
+                InfoRow("Шов", "${fmtNum(spec.groutMm, 1)} мм")
+                InfoRow("Схема", tilePatternTitle(spec.pattern))
+                InfoRow("Угол", "${fmtDeg(spec.effectiveRotation)}°")
+                InfoRow("Целых плиток", "${layout.stats.wholeCount} шт")
+                InfoRow("В подрезку", "${layout.stats.cutCount} шт")
+                InfoRow("Итого", "${layout.stats.totalCount} шт", highlight = true)
             }
-        }
-    }
-}
-
-fun DrawScope.drawRoomWallsAndDimensions(
-    vertices: List<RoomVertex>,
-    selectedVertexIndex: Int?,
-    metersToCanvas: (Float, Float) -> Offset,
-    pxPerMeter: Float,
-    isPerimeterMode: Boolean
-) {
-    val wallColor = Color(0xFFFFDCD2) // Bento peach wall accent
-    val vertexColor = Color(0xFFFF5722)
-
-    for (i in vertices.indices) {
-        val nextIdx = (i + 1) % vertices.size
-        val p1 = vertices[i]
-        val p2 = vertices[nextIdx]
-
-        val pt1 = metersToCanvas(p1.x, p1.y)
-        val pt2 = metersToCanvas(p2.x, p2.y)
-
-        // Draw Thick Wall line
-        drawLine(
-            color = wallColor,
-            start = pt1,
-            end = pt2,
-            strokeWidth = 4.dp.toPx(),
-            cap = StrokeCap.Round
-        )
-
-        // Calculate wall segment length in meters
-        val lengthMeters = sqrt((p2.x - p1.x).pow(2) + (p2.y - p1.y).pow(2))
-        val midPoint = Offset((pt1.x + pt2.x) / 2f, (pt1.y + pt2.y) / 2f)
-
-        // Draw dimension background badge & tick
-        drawCircle(
-            color = Color.Black.copy(alpha = 0.75f),
-            radius = 12.dp.toPx(),
-            center = midPoint
-        )
-    }
-
-    // Draw draggable vertex nodes
-    if (isPerimeterMode) {
-        vertices.forEachIndexed { index, v ->
-            val pt = metersToCanvas(v.x, v.y)
-            val isSelected = index == selectedVertexIndex
-
-            drawCircle(
-                color = if (isSelected) Color(0xFFFF9800) else vertexColor,
-                radius = if (isSelected) 10.dp.toPx() else 7.dp.toPx(),
-                center = pt
-            )
-            drawCircle(
-                color = Color.White,
-                radius = if (isSelected) 4.dp.toPx() else 2.5.dp.toPx(),
-                center = pt
-            )
-        }
-    }
-}
-
-// -------------------------------------------------------------
-// GEOMETRY & POLYGON MATH HELPERS
-// -------------------------------------------------------------
-
-fun calculatePolygonArea(vertices: List<RoomVertex>): Float {
-    if (vertices.size < 3) return 0f
-    var area = 0.0
-    for (i in vertices.indices) {
-        val j = (i + 1) % vertices.size
-        area += (vertices[i].x * vertices[j].y) - (vertices[j].x * vertices[i].y)
-    }
-    return abs(area / 2.0).toFloat()
-}
-
-fun calculatePolygonPerimeter(vertices: List<RoomVertex>): Float {
-    if (vertices.size < 2) return 0f
-    var perimeter = 0f
-    for (i in vertices.indices) {
-        val j = (i + 1) % vertices.size
-        val dx = vertices[j].x - vertices[i].x
-        val dy = vertices[j].y - vertices[i].y
-        perimeter += sqrt(dx * dx + dy * dy)
-    }
-    return perimeter
-}
-
-data class PolygonBounds(val left: Float, val top: Float, val right: Float, val bottom: Float)
-
-fun getPolygonBoundingBox(vertices: List<RoomVertex>): PolygonBounds {
-    if (vertices.isEmpty()) return PolygonBounds(0f, 0f, 1f, 1f)
-    var minX = vertices[0].x
-    var maxX = vertices[0].x
-    var minY = vertices[0].y
-    var maxY = vertices[0].y
-
-    for (v in vertices) {
-        if (v.x < minX) minX = v.x
-        if (v.x > maxX) maxX = v.x
-        if (v.y < minY) minY = v.y
-        if (v.y > maxY) maxY = v.y
-    }
-    return PolygonBounds(minX, minY, maxX, maxY)
+        },
+        confirmButton = { Button(onClick = onDismiss) { Text("Закрыть") } }
+    )
 }

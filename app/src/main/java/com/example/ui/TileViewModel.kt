@@ -7,10 +7,10 @@ import com.example.data.AppDatabase
 import com.example.data.Calculation
 import com.example.data.Order
 import com.example.data.TileRepository
-import kotlinx.coroutines.flow.MutableStateFlow
+import com.example.ui.cad.CadEditorState
+import com.example.ui.calc.CalculatorState
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlin.math.ceil
@@ -38,6 +38,12 @@ class TileViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = emptyList()
         )
     }
+
+    // Состояние экранов держим здесь: вкладки пересоздают композицию, и введённый
+    // чертёж вместе с ценами иначе сбрасывался бы при каждом переключении.
+    // Калькулятор читает cadState напрямую — данные плана попадают в смету сами.
+    val cadState = CadEditorState()
+    val calcState = CalculatorState()
 
     // --- Order Operations ---
     fun addOrder(

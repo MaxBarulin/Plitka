@@ -87,9 +87,13 @@ class ScreenSmokeTest {
     @Test
     fun `calculator takes area from the cad plan automatically`() {
         val viewModel = vm()
-        viewModel.cadState.vertices = rectangleRoom(4000.0, 3000.0) // 12 м²
         rule.setContent { MyApplicationTheme { CalculatorScreen(viewModel = viewModel) } }
+        // Восстановление прошлого сеанса идёт корутиной и иначе перезапишет
+        // то, что задаёт тест.
+        rule.waitUntil(5_000) { viewModel.workspaceLoaded.value }
 
+        rule.runOnIdle { viewModel.cadState.vertices = rectangleRoom(4000.0, 3000.0) } // 12 м²
+        rule.waitForIdle()
         rule.onNodeWithText("Работа (12 м² × 1500 ₽)").assertExists()
 
         // Правка чертежа тут же меняет смету — без всякого «перенести вручную»

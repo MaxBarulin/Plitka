@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -18,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -132,6 +134,9 @@ fun CadLayoutScreen(
                 .fillMaxWidth()
                 .weight(1f)
                 .background(CadColors.Background)
+                // Без этого рисование Canvas выходит за пределы своего блока
+                // и чертёж наползает на шапку с кнопками.
+                .clipToBounds()
                 .onSizeChanged { canvasSize = it }
         ) {
             val transform = CadTransform(
@@ -301,21 +306,39 @@ fun CadLayoutScreen(
                 }
             }
 
-            Surface(
-                modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
-                shape = RoundedCornerShape(10.dp),
-                color = Color.Black.copy(alpha = 0.6f)
-            ) {
-                Text(
-                    text = when {
-                        st.dragMode == DragMode.PAN -> "Навигация: тяните карту, щипок — масштаб"
-                        st.mode == CadMode.ROOM -> "Правка: тапните угол/стену, тяните для сдвига"
-                        else -> "Правка: тяните — двигать старт раскладки"
-                    },
-                    color = Color.White,
-                    fontSize = 10.sp,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-                )
+            // Подсказка живёт в углу и убирается тапом: она нужна первые пару минут,
+            // а закрывать ею чертёж всё остальное время незачем.
+            if (!st.hintDismissed) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(10.dp)
+                        .clickable { st.hintDismissed = true },
+                    shape = RoundedCornerShape(10.dp),
+                    color = CadColors.Hint
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = when {
+                                st.dragMode == DragMode.PAN -> "Тяните карту, щипок — масштаб"
+                                st.mode == CadMode.ROOM -> "Тапните угол или стену, тяните для сдвига"
+                                else -> "Тяните — двигать старт раскладки"
+                            },
+                            color = CadColors.HintText,
+                            fontSize = 10.sp
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Скрыть подсказку",
+                            tint = CadColors.HintText,
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                }
             }
         }
 
@@ -326,7 +349,13 @@ fun CadLayoutScreen(
                 tonalElevation = 3.dp,
                 modifier = Modifier.fillMaxWidth().heightIn(max = 330.dp)
             ) {
-                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp)) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .imePadding()
+                        .padding(12.dp)
+                ) {
                     if (st.mode == CadMode.ROOM) {
                         RoomTabs(st.roomTab) { st.roomTab = it }
                         Spacer(Modifier.height(8.dp))

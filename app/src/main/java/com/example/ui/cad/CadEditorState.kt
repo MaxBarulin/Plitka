@@ -50,6 +50,8 @@ class CadEditorState {
     var roomTab by mutableStateOf(0)
     var tileTab by mutableStateOf(0)
     var panelExpanded by mutableStateOf(true)
+    /** Подсказку над чертежом можно убрать тапом — она нужна только первое время. */
+    var hintDismissed by mutableStateOf(false)
 
     // ----------------------------------------------------------------- шаги
     var linStep by mutableStateOf(10.0)

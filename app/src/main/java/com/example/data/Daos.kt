@@ -33,3 +33,12 @@ interface CalculationDao {
     @Query("DELETE FROM calculations WHERE id = :id")
     suspend fun deleteCalculationById(id: Int)
 }
+
+@Dao
+interface WorkspaceDao {
+    @Query("SELECT * FROM workspace WHERE id = 1")
+    suspend fun get(): Workspace?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun save(workspace: Workspace)
+}

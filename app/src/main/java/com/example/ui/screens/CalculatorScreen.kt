@@ -1,12 +1,14 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import android.content.Intent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Delete
@@ -14,10 +16,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.Calculation
+import com.example.data.Snapshots
 import com.example.ui.TileViewModel
 import com.example.ui.cad.InfoRow
 import com.example.ui.cad.NumberStepperField
@@ -124,7 +129,8 @@ fun CalculatorScreen(
                     Text(
                         money(totals.grandTotal),
                         style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.testTag("total_amount")
                     )
                     HorizontalDivider(Modifier.padding(vertical = 4.dp))
                     InfoRow("Материалы", money(totals.materialsCost))
@@ -484,7 +490,11 @@ fun CalculatorScreen(
                 )
             }
             items(calculations, key = { it.id }) { c ->
-                HistoryCard(c) { viewModel.deleteCalculation(c.id) }
+                HistoryCard(
+                    c = c,
+                    onDelete = { viewModel.deleteCalculation(c.id) },
+                    onLoad = { viewModel.loadCalculation(c) }
+                )
             }
         }
     }
@@ -494,26 +504,68 @@ fun CalculatorScreen(
             onDismissRequest = { showSaveDialog = false },
             title = { Text("Сохранить расчёт", fontWeight = FontWeight.Bold) },
             text = {
-                OutlinedTextField(
-                    value = calcName,
-                    onValueChange = { calcName = it },
-                    label = { Text("Название (адрес, объект)") },
-                    singleLine = true
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = calcName,
+                        onValueChange = { calcName = it },
+                        label = { Text("Название (адрес, объект)") },
+                        singleLine = true
+                    )
+                    HorizontalDivider()
+                    InfoRow("Площадь", "${fmtNum(areaM2, 2)} м²")
+                    InfoRow("Плитка", "${tile.pieces} шт · ${money(tile.cost)}")
+                    InfoRow("Клей", "${glue.bags} меш. · ${money(glue.cost)}")
+                    InfoRow("Затирка", "${fmtNum(groutRes.totalKg, 2)} кг · ${money(groutRes.cost)}")
+                    InfoRow("Материалы", money(totals.materialsCost))
+                    InfoRow("Работа", money(totals.laborCost))
+                    InfoRow("Итого", money(totals.grandTotal), highlight = true)
+                    Text(
+                        "Сохранится и план, и все введённые цены — расчёт можно будет " +
+                            "открыть из истории и продолжить с того же места.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             },
             confirmButton = {
                 Button(onClick = {
                     viewModel.saveCalculation(
-                        name = calcName.ifBlank { "Объект ${fmtNum(areaM2, 1)} м²" },
-                        areaSqM = areaM2,
-                        tileWidthCm = tileW / 10.0,
-                        tileHeightCm = tileH / 10.0,
-                        groutWidthMm = grout,
-                        tilePricePerSqM = cs.tilePriceM2,
-                        glueConsKgPerSqM = glue.totalKgM2,
-                        glueBagWeightKg = cs.glueBagKg,
-                        gluePricePerBag = cs.gluePrice,
-                        groutPricePerKg = cs.groutPriceKg
+                        Calculation(
+                            name = calcName.ifBlank { "Объект ${fmtNum(areaM2, 1)} м²" },
+                            areaM2 = areaM2,
+                            perimeterM = perimeterM,
+                            tileWidthMm = tileW,
+                            tileHeightMm = tileH,
+                            tileThicknessMm = cs.tileThickness,
+                            groutMm = grout,
+                            wastePercent = cs.wastePercent,
+                            tilePieces = tile.pieces,
+                            tilePacks = tile.packs,
+                            tileAreaM2 = tile.piecesAreaM2,
+                            tilePricePerM2 = cs.tilePriceM2,
+                            tileCost = tile.cost,
+                            glueKgPerM2 = glue.totalKgM2,
+                            glueKg = glue.totalKg,
+                            glueBags = glue.bags,
+                            glueBagKg = cs.glueBagKg,
+                            gluePricePerBag = cs.gluePrice,
+                            glueCost = glue.cost,
+                            groutKgPerM2 = groutRes.kgPerM2,
+                            groutKg = groutRes.totalKg,
+                            groutPacks = groutRes.packs,
+                            groutPricePerKg = cs.groutPriceKg,
+                            groutCost = groutRes.cost,
+                            extrasCost = screed.cost + primer.cost + waterproof.cost + consum.cost + trim.cost,
+                            materialsCost = totals.materialsCost,
+                            laborPricePerM2 = cs.workPriceM2,
+                            laborCost = totals.laborCost,
+                            totalCost = totals.grandTotal,
+                            totalWeightKg = totals.totalWeightKg,
+                            workDays = work.days,
+                            // Полный снимок ввода: расчёт можно будет открыть и продолжить
+                            cadJson = Snapshots.cadToJson(cad),
+                            calcJson = Snapshots.calcToJson(cs)
+                        )
                     )
                     calcName = ""
                     showSaveDialog = false
@@ -564,11 +616,13 @@ private fun CalcCard(
 }
 
 @Composable
-private fun HistoryCard(c: Calculation, onDelete: () -> Unit) {
+private fun HistoryCard(c: Calculation, onDelete: () -> Unit, onLoad: () -> Boolean) {
+    var showDetails by remember { mutableStateOf(false) }
     val sdf = remember { SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()) }
+
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth().clickable { showDetails = true }
     ) {
         Row(
             Modifier.padding(12.dp).fillMaxWidth(),
@@ -578,15 +632,15 @@ private fun HistoryCard(c: Calculation, onDelete: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(c.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 Text(
-                    "${fmtNum(c.areaSqM, 2)} м² · ${c.tileWidthCm.toInt()}×${c.tileHeightCm.toInt()} см · " +
-                        "${c.calculatedTileCount} шт · ${c.calculatedGlueBagsNeeded} меш.",
+                    "${fmtNum(c.areaM2, 2)} м² · ${c.tileWidthMm.toInt()}×${c.tileHeightMm.toInt()} мм · " +
+                        "${c.tilePieces} шт · ${c.glueBags} меш.",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(sdf.format(Date(c.timestamp)), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text(
-                money(c.calculatedTotalMaterialCost),
+                money(c.totalCost),
                 fontWeight = FontWeight.Bold,
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.primary
@@ -596,4 +650,112 @@ private fun HistoryCard(c: Calculation, onDelete: () -> Unit) {
             }
         }
     }
+
+    if (showDetails) {
+        CalculationDetailsDialog(
+            c = c,
+            onLoad = { onLoad(); showDetails = false },
+            onDismiss = { showDetails = false }
+        )
+    }
+}
+
+@Composable
+private fun CalculationDetailsDialog(c: Calculation, onLoad: () -> Unit, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val canLoad = c.calcJson.isNotBlank()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(c.name, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Text("Объект", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                InfoRow("Площадь", "${fmtNum(c.areaM2, 2)} м²")
+                InfoRow("Периметр", "${fmtNum(c.perimeterM, 2)} м")
+                InfoRow("Плитка", "${c.tileWidthMm.toInt()}×${c.tileHeightMm.toInt()}×${fmtNum(c.tileThicknessMm, 1)} мм")
+                InfoRow("Шов", "${fmtNum(c.groutMm, 1)} мм")
+                InfoRow("Запас", "${fmtNum(c.wastePercent, 0)} %")
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                Text("Материалы", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                InfoRow("Плитка", "${c.tilePieces} шт" + if (c.tilePacks > 0) " (${c.tilePacks} уп.)" else "")
+                InfoRow("— площадь", "${fmtNum(c.tileAreaM2, 2)} м² по ${fmtNum(c.tilePricePerM2, 0)} ₽")
+                InfoRow("— стоимость", money(c.tileCost))
+                InfoRow("Клей", "${fmtNum(c.glueKg, 1)} кг = ${c.glueBags} меш. × ${fmtNum(c.glueBagKg, 0)} кг")
+                InfoRow("— расход", "${fmtNum(c.glueKgPerM2, 2)} кг/м²")
+                InfoRow("— стоимость", money(c.glueCost))
+                InfoRow("Затирка", "${fmtNum(c.groutKg, 2)} кг" + if (c.groutPacks > 0) " (${c.groutPacks} уп.)" else "")
+                InfoRow("— расход", "${fmtNum(c.groutKgPerM2, 3)} кг/м²")
+                InfoRow("— стоимость", money(c.groutCost))
+                if (c.extrasCost > 0) {
+                    InfoRow("Прочее (грунт, СВП, погонаж)", money(c.extrasCost))
+                }
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                InfoRow("Материалы всего", money(c.materialsCost))
+                InfoRow("Работа (${fmtNum(c.laborPricePerM2, 0)} ₽/м²)", money(c.laborCost))
+                InfoRow("ИТОГО", money(c.totalCost), highlight = true)
+                InfoRow("Вес", "${fmtNum(c.totalWeightKg, 0)} кг")
+                InfoRow("Срок", "${fmtNum(c.workDays, 1)} смен")
+                if (canLoad) {
+                    Text(
+                        "«Открыть» вернёт план и все цены этого расчёта в редактор и калькулятор.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (canLoad) {
+                Button(onClick = onLoad) {
+                    Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Открыть")
+                }
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_SUBJECT, "Смета: ${c.name}")
+                        putExtra(Intent.EXTRA_TEXT, c.asPlainText())
+                    }
+                    runCatching {
+                        context.startActivity(Intent.createChooser(send, "Отправить смету"))
+                    }
+                }) {
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Отправить")
+                }
+                TextButton(onClick = onDismiss) { Text("Закрыть") }
+            }
+        }
+    )
+}
+
+/** Смета простым текстом — чтобы отправить заказчику в мессенджер. */
+private fun Calculation.asPlainText(): String = buildString {
+    appendLine("СМЕТА: $name")
+    appendLine("Площадь: ${fmtNum(areaM2, 2)} м², периметр ${fmtNum(perimeterM, 2)} м")
+    appendLine("Плитка ${tileWidthMm.toInt()}×${tileHeightMm.toInt()} мм, шов ${fmtNum(groutMm, 1)} мм, запас ${fmtNum(wastePercent, 0)} %")
+    appendLine()
+    appendLine("МАТЕРИАЛЫ")
+    appendLine("• Плитка: $tilePieces шт" + (if (tilePacks > 0) " ($tilePacks уп.)" else "") + " — ${money(tileCost)}")
+    appendLine("• Клей: ${fmtNum(glueKg, 1)} кг = $glueBags меш. — ${money(glueCost)}")
+    appendLine("• Затирка: ${fmtNum(groutKg, 2)} кг — ${money(groutCost)}")
+    if (extrasCost > 0) appendLine("• Прочее: ${money(extrasCost)}")
+    appendLine("Итого материалы: ${money(materialsCost)}")
+    appendLine()
+    appendLine("РАБОТА: ${fmtNum(areaM2, 2)} м² × ${fmtNum(laborPricePerM2, 0)} ₽ = ${money(laborCost)}")
+    appendLine("Срок: ${fmtNum(workDays, 1)} смен")
+    appendLine()
+    appendLine("ВСЕГО: ${money(totalCost)}")
 }

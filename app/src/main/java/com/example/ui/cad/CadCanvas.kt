@@ -18,27 +18,31 @@ import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.sin
 
-// Палитра «тёмного CAD»
+// Палитра чертежа: светлая «бумага» в тон интерфейсу.
+// Линии темнее фона, а не наоборот — так план читается и на солнце, и в печати.
 object CadColors {
-    val Background = Color(0xFF1B1F27)
-    val GridMinor = Color(0xFF262C37)
-    val GridMajor = Color(0xFF39414F)
-    val Axis = Color(0xFF4E5B70)
-    val Floor = Color(0xFF2A303B)
-    val Wall = Color(0xFFFFD8C7)
-    val WallLocked = Color(0xFF6EE7B7)
-    val WallSelected = Color(0xFFFFC400)
-    val Vertex = Color(0xFFFF6B35)
-    val VertexSelected = Color(0xFFFFC400)
-    val VertexPinned = Color(0xFF60A5FA)
-    val TileWhole = Color(0xFFE8E0D6)
-    val TileCut = Color(0xFFC9A227)
-    val TileEdge = Color(0x33000000)
-    val Obstacle = Color(0xFF12151B)
-    val ObstacleEdge = Color(0xFFFF9AA2)
-    val Origin = Color(0xFFFF3D00)
-    val Label = Color(0xFFF2F5F9)
-    val LabelBg = Color(0xE0111419)
+    val Background = Color(0xFFF2EBE0) // поле вокруг помещения
+    val GridMinor = Color(0xFFE4DACA) // сетка 100 мм
+    val GridMajor = Color(0xFFCFBFA6) // сетка 1 м
+    val Axis = Color(0xFFB09A7C) // оси нуля
+    val Floor = Color(0xFFFBF7F1) // пол помещения
+    val Wall = Color(0xFF4A3524) // стена
+    val WallLocked = Color(0xFF2F7A55) // стена с зафиксированной длиной
+    val WallSelected = Color(0xFFB4611A) // выбранная стена
+    val Vertex = Color(0xFFB4611A)
+    val VertexSelected = Color(0xFF7A4526)
+    val VertexPinned = Color(0xFF2F6FB0)
+    val TileWhole = Color(0xFFFFFFFF) // целая плитка
+    val TileCut = Color(0xFFE7C06A) // плитка в подрезку
+    val TileEdge = Color(0x33241C15) // шов
+    val Obstacle = Color(0xFFDCCFBC) // короб
+    val ObstacleEdge = Color(0xFF9C2F1E)
+    val Origin = Color(0xFFC2410C) // точка старта раскладки
+    val OriginCross = Color(0xFF2F6FB0)
+    val Label = Color(0xFF241C15) // текст подписей
+    val LabelBg = Color(0xE8FBF7F1) // подложка подписей
+    val Hint = Color(0xE62F2418) // подложка подсказки поверх канвы
+    val HintText = Color(0xFFFBF7F1)
 }
 
 /** Преобразование мм <-> пиксели канвы. */
@@ -246,7 +250,7 @@ fun DrawScope.drawWalls(
                 "${fmtMm(lenMm)}$lockMark",
                 labelPos,
                 fontSize = 11f,
-                bg = if (selectedWall == i) Color(0xE0553B00) else CadColors.LabelBg,
+                bg = if (selectedWall == i) Color(0xF0F6E3D3) else CadColors.LabelBg,
                 fg = if (isLocked) CadColors.WallLocked else CadColors.Label
             )
         }
@@ -269,7 +273,7 @@ fun DrawScope.drawWalls(
                 "${fmtDeg(ang)}°",
                 Offset(p.x + dx / l * 34f, p.y + dy / l * 34f),
                 fontSize = 10f,
-                fg = if (abs(ang - 90.0) < 0.15) Color(0xFF9CE3B4) else CadColors.Label
+                fg = if (abs(ang - 90.0) < 0.15) CadColors.WallLocked else CadColors.Label
             )
         }
     }
@@ -284,7 +288,7 @@ fun DrawScope.drawWalls(
                 else -> CadColors.Vertex
             }
             drawCircle(col, radius = if (sel) 13f else 9f, center = p)
-            drawCircle(Color.White, radius = if (sel) 5f else 3f, center = p)
+            drawCircle(CadColors.Floor, radius = if (sel) 5f else 3f, center = p)
             if (v.pinned) {
                 drawCircle(CadColors.VertexPinned, radius = 17f, center = p, style = Stroke(width = 2f))
             }
@@ -296,7 +300,7 @@ fun DrawScope.drawWalls(
 fun DrawScope.drawOriginMarker(x: Double, y: Double, rotationDeg: Double, t: CadTransform) {
     val p = t.toScreen(x, y)
     drawCircle(CadColors.Origin, radius = 10f, center = p)
-    drawCircle(Color.White, radius = 4f, center = p)
+    drawCircle(CadColors.Floor, radius = 4f, center = p)
     val rad = Math.toRadians(-rotationDeg)
     val ux = cos(rad).toFloat()
     val uy = sin(rad).toFloat()
@@ -304,7 +308,7 @@ fun DrawScope.drawOriginMarker(x: Double, y: Double, rotationDeg: Double, t: Cad
     // Ось X сетки
     drawLine(CadColors.Origin, p, Offset(p.x + ux * len, p.y + uy * len), 3f, cap = StrokeCap.Round)
     // Ось Y сетки (перпендикуляр)
-    drawLine(Color(0xFF4FC3F7), p, Offset(p.x - uy * len, p.y + ux * len), 3f, cap = StrokeCap.Round)
+    drawLine(CadColors.OriginCross, p, Offset(p.x - uy * len, p.y + ux * len), 3f, cap = StrokeCap.Round)
 }
 
 /** Масштабная линейка в углу канвы. */

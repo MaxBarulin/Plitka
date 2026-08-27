@@ -37,9 +37,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -67,13 +70,14 @@ fun NumberStepperField(
     max: Double = 1_000_000.0,
     enabled: Boolean = true
 ) {
-    var text by remember { mutableStateOf(fmtNum(value, decimals)) }
+    var field by remember { mutableStateOf(TextFieldValue(fmtNum(value, decimals))) }
     var lastPushed by remember { mutableStateOf(value) }
 
     // Внешнее изменение значения (стрелки, решатель связей) — обновляем поле.
     if (value != lastPushed) {
         lastPushed = value
-        text = fmtNum(value, decimals)
+        val t = fmtNum(value, decimals)
+        field = TextFieldValue(t, TextRange(t.length))
     }
 
     fun push(v: Double) {
@@ -82,18 +86,25 @@ fun NumberStepperField(
         onValueChange(c)
     }
 
+    fun stepBy(delta: Double) {
+        val next = (value + delta).coerceIn(min, max)
+        push(next)
+        val t = fmtNum(next, decimals)
+        field = TextFieldValue(t, TextRange(t.length))
+    }
+
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         FilledTonalIconButton(
-            onClick = { push(value - step); text = fmtNum((value - step).coerceIn(min, max), decimals) },
+            onClick = { stepBy(-step) },
             enabled = enabled,
             modifier = Modifier.size(38.dp)
-        ) { Icon(Icons.Default.Remove, contentDescription = "Минус $step", modifier = Modifier.size(18.dp)) }
+        ) { Icon(Icons.Default.Remove, contentDescription = "Минус ${fmtNum(step, 2)}", modifier = Modifier.size(18.dp)) }
 
         OutlinedTextField(
-            value = text,
+            value = field,
             onValueChange = {
-                text = it
-                parseNum(it)?.let { v -> push(v) }
+                field = it
+                parseNum(it.text)?.let { v -> push(v) }
             },
             label = { Text(label, fontSize = 11.sp) },
             suffix = if (suffix.isNotEmpty()) ({ Text(suffix, fontSize = 11.sp) }) else null,
@@ -104,13 +115,18 @@ fun NumberStepperField(
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 4.dp)
+                // Ставим курсор на всё значение: иначе набор «3400» поверх «600»
+                // проходил бы через 6003, 60034... и геометрия дёргалась на каждый символ.
+                .onFocusChanged { st ->
+                    if (st.isFocused) field = field.copy(selection = TextRange(0, field.text.length))
+                }
         )
 
         FilledTonalIconButton(
-            onClick = { push(value + step); text = fmtNum((value + step).coerceIn(min, max), decimals) },
+            onClick = { stepBy(step) },
             enabled = enabled,
             modifier = Modifier.size(38.dp)
-        ) { Icon(Icons.Default.Add, contentDescription = "Плюс $step", modifier = Modifier.size(18.dp)) }
+        ) { Icon(Icons.Default.Add, contentDescription = "Плюс ${fmtNum(step, 2)}", modifier = Modifier.size(18.dp)) }
     }
 }
 

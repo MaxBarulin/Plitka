@@ -54,16 +54,28 @@ private val LightColorScheme = lightColorScheme(
     surface = SurfaceLight,
     onSurface = OnSurfaceLight,
     surfaceVariant = SurfaceVariantLight,
-    onSurfaceVariant = OnSurfaceVariantLight
+    onSurfaceVariant = OnSurfaceVariantLight,
+    outline = OutlineLight,
+    outlineVariant = OutlineVariantLight,
+    error = ErrorLight,
+    onError = OnErrorLight,
+    errorContainer = ErrorContainerLight,
+    onErrorContainer = OnErrorContainerLight,
+    surfaceContainerLowest = SurfaceLight,
+    surfaceContainerLow = SurfaceLight,
+    surfaceContainer = SurfaceVariantLight,
+    surfaceContainerHigh = SurfaceVariantLight,
+    surfaceContainerHighest = SurfaceVariantLight
 )
 
 /**
- * Приложение всегда тёмное: на объекте так меньше слепит, а чертёж на тёмном фоне
- * читается лучше. Системная настройка светлой темы игнорируется намеренно.
+ * Приложение всегда в светлой бежевой теме — так же, как оно выглядит на скриншотах
+ * и в печатной смете. Системная настройка тёмной темы игнорируется намеренно,
+ * чтобы чертёж и цифры везде читались одинаково.
  */
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = true,
+    darkTheme: Boolean = false,
     dynamicColor: Boolean = false, // Disable dynamic colors to enforce our beautiful custom branding
     content: @Composable () -> Unit,
 ) {

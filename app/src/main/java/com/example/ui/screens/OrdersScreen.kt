@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.data.Order
+import com.example.data.OrderStatus
 import com.example.ui.TileViewModel
 import java.text.SimpleDateFormat
 import java.util.*
@@ -41,9 +42,9 @@ fun OrdersScreen(
     var selectedFilter by remember { mutableStateOf("ALL") } // ALL, PLANNED, IN_PROGRESS, DONE
     val filterOptions = listOf(
         "ALL" to "Все",
-        "PLANNED" to "План",
-        "IN_PROGRESS" to "В работе",
-        "DONE" to "Готово"
+        OrderStatus.PLANNED to OrderStatus.label(OrderStatus.PLANNED),
+        OrderStatus.IN_PROGRESS to OrderStatus.label(OrderStatus.IN_PROGRESS),
+        OrderStatus.DONE to OrderStatus.label(OrderStatus.DONE)
     )
 
     val filteredOrders = remember(orders, selectedFilter) {
@@ -401,7 +402,7 @@ fun OrdersScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                listOf("PLANNED" to "План", "IN_PROGRESS" to "В работе", "DONE" to "Готово").forEach { (code, lbl) ->
+                                OrderStatus.ALL.map { it to OrderStatus.label(it) }.forEach { (code, lbl) ->
                                     FilterChip(
                                         selected = editStatus == code,
                                         onClick = { editStatus = code },

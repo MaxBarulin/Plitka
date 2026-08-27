@@ -14,19 +14,26 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.TileTab
+import com.example.data.Order
+import com.example.data.OrderStatus
 import com.example.ui.TileViewModel
 import com.example.ui.cad.fmtNum
-import com.example.TileTab
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
+
+const val TELEGRAM_HANDLE = "@Cvela_siren"
+const val TELEGRAM_URL = "https://t.me/Cvela_siren"
+
+private fun money(v: Double): String = "%,.0f ₽".format(v).replace(',', ' ')
 
 @Composable
 fun DashboardScreen(
@@ -35,463 +42,384 @@ fun DashboardScreen(
     modifier: Modifier = Modifier
 ) {
     val orders by viewModel.allOrders.collectAsState()
-    val scrollState = rememberScrollState()
+    val calculations by viewModel.allCalculations.collectAsState()
+    val cad = viewModel.cadState
 
-    // Find closest active order (not completed, sorted by date)
-    val nextOrder = remember(orders) {
-        orders.filter { it.status != "Готово" }
-            .minByOrNull { it.dateMillis }
-    }
+    val activeOrders = remember(orders) { orders.filter { OrderStatus.isActive(it.status) } }
+    val nextOrder = remember(activeOrders) { activeOrders.minByOrNull { it.dateMillis } }
+    val lastCalculation = calculations.firstOrNull()
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .verticalScroll(scrollState)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // --- Bento Header ---
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(
-                    text = "ПроПлитка",
-                    style = MaterialTheme.typography.headlineMedium.copy(
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = (-0.5).sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                )
-                Text(
-                    text = "Ваш рабочий кабинет",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+        Spacer(Modifier.height(2.dp))
 
-            // Avatar "AC" styled as per Bento design
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer)
-                    .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                    .shadow(1.dp, CircleShape)
-                    .testTag("user_avatar"),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "АС",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                )
-            }
-        }
+        Header(activeOrders.size)
 
-        // --- Bento Grid Cells ---
-
-        // Cell 1: ближайший активный заказ.
-        // Пока заказов нет — никаких выдуманных объектов, только приглашение завести первый.
         if (nextOrder == null) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), shape = MaterialTheme.shapes.large)
-                    .clickable { onNavigateToTab(TileTab.ORDERS) }
-                    .testTag("bento_no_orders"),
-                shape = MaterialTheme.shapes.large
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.EventAvailable,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(36.dp)
-                    )
-                    Text(
-                        text = "Заказов пока нет",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Добавьте первый объект во вкладке «Заказы» — он появится здесь",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
+            EmptyOrdersCard { onNavigateToTab(TileTab.ORDERS) }
         } else {
-            val progressPercent = when (nextOrder.status) {
-                "В работе" -> 50
-                "План" -> 15
-                "Готово" -> 100
-                else -> 25
-            }
-            val dateString = SimpleDateFormat("dd MMM", Locale("ru")).format(Date(nextOrder.dateMillis))
-
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(2.dp, shape = MaterialTheme.shapes.large)
-                    .clickable { onNavigateToTab(TileTab.ORDERS) }
-                    .testTag("bento_closest_order"),
-                shape = MaterialTheme.shapes.large
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .background(color = MaterialTheme.colorScheme.primary, shape = CircleShape)
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = "Ближайший заказ",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    fontSize = 10.sp
-                                )
-                            )
-                        }
-                        Text(
-                            text = dateString,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-
-                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                        Text(
-                            text = nextOrder.title,
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        )
-                        if (nextOrder.address.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = nextOrder.address,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
-                            )
-                        }
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        LinearProgressIndicator(
-                            progress = { progressPercent / 100f },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(8.dp)
-                                .clip(CircleShape),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                        )
-                        Text(
-                            text = "$progressPercent%",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        )
-                    }
-                }
-            }
+            NextOrderCard(nextOrder) { onNavigateToTab(TileTab.ORDERS) }
         }
 
-        // Cell 2: Two cards side by side (Estimate and CAD Plan)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Left Card: CAD Plan
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                ),
-                modifier = Modifier
-                    .weight(1f)
-                    .height(135.dp)
-                    .shadow(1.dp, shape = MaterialTheme.shapes.large)
-                    .clickable { onNavigateToTab(TileTab.CAD_PLAN) }
-                    .testTag("bento_cad"),
-                shape = MaterialTheme.shapes.large
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .background(MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.medium)
-                            .shadow(1.dp, shape = MaterialTheme.shapes.medium),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CropFree,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+        CurrentPlanCard(
+            corners = cad.vertices.size,
+            areaM2 = cad.areaM2,
+            perimeterM = cad.perimeterM,
+            tileW = cad.tileW,
+            tileH = cad.tileH,
+            groutMm = cad.grout,
+            rotationDeg = cad.tileRotation,
+            onClick = { onNavigateToTab(TileTab.CAD_PLAN) }
+        )
 
-                    Column {
-                        Text(
-                            text = "CAD Чертеж",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            lineHeight = 20.sp
-                        )
-                        Text(
-                            text = "Контур и раскладка",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
-                        )
-                    }
-                }
-            }
+        LastEstimateCard(
+            name = lastCalculation?.name,
+            total = lastCalculation?.totalCost,
+            areaM2 = lastCalculation?.areaM2,
+            onClick = { onNavigateToTab(TileTab.CALCULATOR) }
+        )
 
-            // Right Card: Calculate Estimate
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.secondary,
-                    contentColor = MaterialTheme.colorScheme.onSecondary
-                ),
-                modifier = Modifier
-                    .weight(1f)
-                    .height(135.dp)
-                    .shadow(1.dp, shape = MaterialTheme.shapes.large)
-                    .clickable { onNavigateToTab(TileTab.CALCULATOR) }
-                    .testTag("bento_estimate"),
-                shape = MaterialTheme.shapes.large
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .background(MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.medium)
-                            .shadow(1.dp, shape = MaterialTheme.shapes.medium),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Calculate,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+        CalendarCard(activeOrders.size) { onNavigateToTab(TileTab.ORDERS) }
 
-                    Column {
-                        Text(
-                            text = "Смета материалов",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            lineHeight = 20.sp
-                        )
-                        Text(
-                            text = "Клей, затирка, СВП",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondary.copy(alpha = 0.7f)
-                        )
-                    }
-                }
-            }
+        AuthorSignature()
+
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+// =====================================================================================
+
+@Composable
+private fun Header(activeCount: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = "ПроПлитка",
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = (-0.5).sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            )
+            Text(
+                text = if (activeCount > 0)
+                    plural(activeCount, "активный заказ", "активных заказа", "активных заказов")
+                else
+                    "Свободный график",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-
-        // Cell 3: Calendar & Tasks Card
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-            ),
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), shape = MaterialTheme.shapes.large)
-                .shadow(1.dp, shape = MaterialTheme.shapes.large)
-                .clickable { onNavigateToTab(TileTab.ORDERS) }
-                .testTag("bento_calendar"),
-            shape = MaterialTheme.shapes.large
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer)
+                .testTag("app_mark"),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.GridView,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
+/** Каркас плитки бенто: одинаковые отступы, рамка и заголовок у всех карточек. */
+@Composable
+private fun BentoCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    testTag: String,
+    accent: Boolean = false,
+    content: (@Composable ColumnScope.() -> Unit)? = null
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (accent) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surface,
+            contentColor = if (accent) MaterialTheme.colorScheme.onPrimaryContainer
+            else MaterialTheme.colorScheme.onSurface
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large)
+            .clickable(onClick = onClick)
+            .testTag(testTag),
+        shape = MaterialTheme.shapes.large
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.medium)
-                            .shadow(1.dp, shape = MaterialTheme.shapes.medium),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CalendarMonth,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
                     Column {
+                        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text(
-                            text = "Календарь заказов",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        val activeCount = orders.filter { it.status != "Готово" }.size
-                        Text(
-                            text = if (activeCount > 0)
-                                plural(activeCount, "активный объект", "активных объекта", "активных объектов") + " в графике"
-                            else "График свободен",
+                            subtitle,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-
                 Icon(
                     imageVector = Icons.Default.ChevronRight,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary
                 )
             }
+            content?.invoke(this)
         }
+    }
+}
 
-        // Cell 4: сводка по текущему плану — реальные цифры из CAD-редактора,
-        // а не декоративный блок.
-        val cad = viewModel.cadState
-        val cadArea = cad.areaM2
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f), shape = MaterialTheme.shapes.large)
-                .clickable { onNavigateToTab(TileTab.CAD_PLAN) }
-                .testTag("bento_current_plan"),
-            shape = MaterialTheme.shapes.large
-        ) {
+/** Три равные ячейки со значением и подписью. */
+@Composable
+private fun StatRow(stats: List<Pair<String, String>>) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        stats.forEach { (label, value) ->
             Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier
+                    .weight(1f)
+                    .background(
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                        shape = MaterialTheme.shapes.medium
+                    )
+                    .padding(vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyOrdersCard(onClick: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large)
+            .clickable(onClick = onClick)
+            .testTag("bento_no_orders"),
+        shape = MaterialTheme.shapes.large
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.EventAvailable,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(36.dp)
+            )
+            Text("Заказов пока нет", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "Добавьте первый объект во вкладке «Заказы» — он появится здесь",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+private fun NextOrderCard(order: Order, onClick: () -> Unit) {
+    val dateString = remember(order.dateMillis) {
+        SimpleDateFormat("d MMMM", Locale("ru")).format(Date(order.dateMillis))
+    }
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag("bento_closest_order"),
+        shape = MaterialTheme.shapes.large
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Ближайший заказ",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "$dateString · ${dueLabel(order.dateMillis)}",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Text(
+                text = order.title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            if (order.address.isNotBlank()) {
+                Text(
+                    text = order.address,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                )
+            }
+
+            // Никакого «процента готовности»: приложение его не знает.
+            // Показываем только то, что действительно записано в заказе.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f), CircleShape)
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
-                    Column {
-                        Text(
-                            text = "Текущий план",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "${plural(cad.vertices.size, "угол", "угла", "углов")} · плитка " +
-                                "${cad.tileW.toInt()}×${cad.tileH.toInt()} мм · шов ${fmtNum(cad.grout, 1)} мм",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.Default.ChevronRight,
-                        contentDescription = "В CAD-редактор",
-                        tint = MaterialTheme.colorScheme.primary
+                    Text(
+                        text = OrderStatus.label(order.status),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    listOf(
-                        "Площадь" to "%.2f м²".format(cadArea),
-                        "Периметр" to "%.2f м".format(cad.perimeterM),
-                        "Угол" to "%.0f°".format(cad.tileRotation)
-                    ).forEach { (label, value) ->
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .background(
-                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
-                                    shape = MaterialTheme.shapes.medium
-                                )
-                                .border(1.dp, MaterialTheme.colorScheme.primaryContainer, shape = MaterialTheme.shapes.medium)
-                                .padding(vertical = 10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = value,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = label,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+                if (order.clientName.isNotBlank()) {
+                    Text(
+                        text = order.clientName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                if (order.totalCost > 0) {
+                    Text(
+                        text = money(order.totalCost),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
         }
-
-        AuthorSignature()
-
-        Spacer(modifier = Modifier.height(8.dp))
     }
+}
+
+@Composable
+private fun CurrentPlanCard(
+    corners: Int,
+    areaM2: Double,
+    perimeterM: Double,
+    tileW: Double,
+    tileH: Double,
+    groutMm: Double,
+    rotationDeg: Double,
+    onClick: () -> Unit
+) {
+    BentoCard(
+        title = "Текущий план",
+        subtitle = "${plural(corners, "угол", "угла", "углов")} · плитка " +
+            "${tileW.toInt()}×${tileH.toInt()} мм · шов ${fmtNum(groutMm, 1)} мм",
+        icon = Icons.Default.CropFree,
+        onClick = onClick,
+        testTag = "bento_current_plan"
+    ) {
+        StatRow(
+            listOf(
+                "Площадь" to "${fmtNum(areaM2, 2)} м²",
+                "Периметр" to "${fmtNum(perimeterM, 2)} м",
+                "Угол" to "${fmtNum(rotationDeg, 0)}°"
+            )
+        )
+    }
+}
+
+@Composable
+private fun LastEstimateCard(
+    name: String?,
+    total: Double?,
+    areaM2: Double?,
+    onClick: () -> Unit
+) {
+    BentoCard(
+        title = "Смета материалов",
+        subtitle = if (name != null && total != null && areaM2 != null)
+            "$name · ${fmtNum(areaM2, 2)} м² · ${money(total)}"
+        else
+            "Клей, затирка, СВП, стяжка, работа",
+        icon = Icons.Default.Calculate,
+        onClick = onClick,
+        testTag = "bento_estimate"
+    )
+}
+
+@Composable
+private fun CalendarCard(activeCount: Int, onClick: () -> Unit) {
+    BentoCard(
+        title = "Календарь заказов",
+        subtitle = if (activeCount > 0)
+            plural(activeCount, "активный объект", "активных объекта", "активных объектов") + " в графике"
+        else
+            "График свободен",
+        icon = Icons.Default.CalendarMonth,
+        onClick = onClick,
+        testTag = "bento_calendar"
+    )
 }
 
 /** Подпись автора: тап открывает телеграм. */
@@ -527,6 +455,20 @@ fun AuthorSignature(modifier: Modifier = Modifier) {
     }
 }
 
+/** Когда заказ: «сегодня», «через 3 дня», «просрочен на 2 дня». */
+fun dueLabel(dateMillis: Long, nowMillis: Long = System.currentTimeMillis()): String {
+    val dayMs = 24L * 60 * 60 * 1000
+    // Считаем в календарных днях: заказ «завтра» не должен зависеть от часа записи.
+    val days = Math.floorDiv(dateMillis, dayMs) - Math.floorDiv(nowMillis, dayMs)
+    return when {
+        days == 0L -> "сегодня"
+        days == 1L -> "завтра"
+        days == -1L -> "был вчера"
+        days > 1L -> "через ${plural(days.toInt(), "день", "дня", "дней")}"
+        else -> "просрочен на ${plural((-days).toInt(), "день", "дня", "дней")}"
+    }
+}
+
 /** Число со склонением: 1 угол, 2 угла, 5 углов. */
 fun plural(n: Int, one: String, few: String, many: String): String {
     val mod100 = n % 100
@@ -539,6 +481,3 @@ fun plural(n: Int, one: String, few: String, many: String): String {
     }
     return "$n $word"
 }
-
-const val TELEGRAM_HANDLE = "@Cvela_siren"
-const val TELEGRAM_URL = "https://t.me/Cvela_siren"
